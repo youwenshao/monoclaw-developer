@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "workspaceRoot": "/Users/admin/Projects",
+  "repositories": [
+    {
+      "name": "monoclaw-runtime",
+      "url": "https://github.com/youwenshao/monoclaw-runtime.git",
+      "path": "../monoclaw-runtime",
+      "branch": "main",
+      "role": "runtime",
+      "requiredForHatchBundle": true
+    },
+    {
+      "name": "monoclaw-web",
+      "url": "https://github.com/youwenshao/monoclaw-web.git",
+      "path": "../monoclaw-web",
+      "branch": "main",
+      "role": "website",
+      "requiredForHatchBundle": false
+    },
+    {
+      "name": "scuttle-reference",
+      "url": "https://github.com/youwenshao/scuttle.git",
+      "path": "../scuttle-reference",
+      "branch": "main",
+      "role": "reference-installer",
+      "requiredForHatchBundle": false,
+      "referenceOnly": true
+    },
+    {
+      "name": "hatch",
+      "path": "./hatch",
+      "role": "installer",
+      "requiredForHatchBundle": true,
+      "local": true
+    }
+  ],
+  "futureToolRepos": []
+}

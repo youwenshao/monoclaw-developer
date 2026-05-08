@@ -1,0 +1,21 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Local workspace clones and generated runtime artifacts
+../monoclaw-runtime/
+../monoclaw-web/
+../scuttle-reference/
+dist/
+vendor/
+model-cache/
+weights/
+provisioning-logs/
+
+# Tool caches
+.pytest_cache/
+__pycache__/
+node_modules/
+.venv/
+venv/

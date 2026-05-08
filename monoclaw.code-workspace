@@ -1,0 +1,34 @@
+{
+  "folders": [
+    {
+      "name": "monoclaw-developer",
+      "path": "."
+    },
+    {
+      "name": "monoclaw-runtime",
+      "path": "../monoclaw-runtime"
+    },
+    {
+      "name": "monoclaw-web",
+      "path": "../monoclaw-web"
+    },
+    {
+      "name": "scuttle-reference",
+      "path": "../scuttle-reference"
+    },
+    {
+      "name": "hatch",
+      "path": "./hatch"
+    }
+  ],
+  "settings": {
+    "files.exclude": {
+      "**/.env": true,
+      "**/.env.local": true,
+      "**/dist": true,
+      "**/vendor": true,
+      "**/model-cache": true,
+      "**/weights": true
+    }
+  }
+}
