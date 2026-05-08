@@ -83,3 +83,26 @@ if HATCH_INPUT_ROOT="${INPUTS}" \
 fi
 grep -q "unsafe dist root" "${TMP}/unsafe-dist.out"
 test -f "${INPUTS}/vendor/models/gemma-4-e4b/gemma-4-e4b.gguf"
+
+PROJECTS="${TMP}/Projects"
+STANDALONE_HATCH="${PROJECTS}/hatch"
+STANDALONE_RUNTIME="${PROJECTS}/monoclaw-runtime"
+STANDALONE_DIST="${TMP}/standalone-dist"
+STANDALONE_WHEEL="${TMP}/standalone-wheel.whl"
+mkdir -p "${PROJECTS}" "${STANDALONE_RUNTIME}" "${STANDALONE_HATCH}/bundle-inputs/vendor/lm-studio/LM Studio.app/Contents" "${STANDALONE_HATCH}/bundle-inputs/vendor/models/gemma-4-e4b"
+cp -R "${ROOT}/." "${STANDALONE_HATCH}/"
+printf 'standalone LM Studio placeholder\n' > "${STANDALONE_HATCH}/bundle-inputs/vendor/lm-studio/LM Studio.app/Contents/Info.plist"
+printf 'standalone Gemma placeholder\n' > "${STANDALONE_HATCH}/bundle-inputs/vendor/models/gemma-4-e4b/gemma-4-e4b.gguf"
+printf 'standalone wheel placeholder\n' > "${STANDALONE_WHEEL}"
+cat > "${STANDALONE_RUNTIME}/pyproject.toml" <<'TOML'
+[project]
+name = "monoclaw-runtime"
+version = "0.13.0"
+TOML
+
+HATCH_RUNTIME_WHEEL="${STANDALONE_WHEEL}" \
+HATCH_DIST_ROOT="${STANDALONE_DIST}" \
+HATCH_SKIP_RUNTIME_BUILD=1 \
+  "${STANDALONE_HATCH}/build.sh" | tee "${TMP}/standalone-build.out"
+grep -q "Built by Hatch from ${STANDALONE_RUNTIME}" "${STANDALONE_DIST}/runtime/about.md"
+test -x "${STANDALONE_DIST}/install.sh"

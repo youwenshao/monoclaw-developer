@@ -5,9 +5,9 @@
 Run before handing off Hatch script changes:
 
 ```bash
-bash hatch/tests/run_tests.sh
-bash hatch/bin/hatch --dry-run preflight
-bash -n hatch/bin/hatch
+bash tests/run_tests.sh
+bash bin/hatch --dry-run preflight
+bash -n bin/hatch
 ```
 
 This checks shell syntax, the manifest-backed dry-run lifecycle test for
@@ -17,7 +17,8 @@ generated `install.sh` wrapper using fixture bundle inputs.
 ## Assembly Gate
 
 Before cutting a production provisioning medium, run the real assembler from
-`hatch/` with production inputs staged in `hatch/bundle-inputs/`:
+`/Users/admin/Projects/hatch` with production inputs staged in
+`/Users/admin/Projects/hatch/bundle-inputs/`:
 
 ```bash
 ./build.sh

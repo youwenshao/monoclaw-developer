@@ -12,7 +12,7 @@ bundle from a provisioning medium on the target Mac.
 ## Commands
 
 ```bash
-# Assembly machine, from this hatch/ directory.
+# Assembly machine, from /Users/admin/Projects/hatch.
 ./build.sh
 
 # Target Mac, from the copied dist/ directory on the pendrive.
@@ -42,8 +42,10 @@ those files instead of overwriting technician or customer configuration.
 ## Production Bundle Inputs
 
 `./build.sh` is strict by default. It expects the MonoClaw runtime checkout at
-`../../monoclaw-runtime` and production-only large inputs under
-`hatch/bundle-inputs/`, which is intentionally ignored by git:
+`../monoclaw-runtime` and production-only large inputs under this checkout's
+`bundle-inputs/` directory. For the standard workspace, that is
+`/Users/admin/Projects/hatch/bundle-inputs/`, which is intentionally ignored by
+git:
 
 ```text
 bundle-inputs/
@@ -61,7 +63,7 @@ bundle-inputs/
 ```
 
 The builder stages these files into `dist/`, builds the runtime dashboard assets
-and Python wheel from `../../monoclaw-runtime`, writes `hatch-manifest.json` with
+and Python wheel from `../monoclaw-runtime`, writes `hatch-manifest.json` with
 artifact sizes and SHA-256 hashes, and verifies the bundle before returning.
 Copy the resulting `dist/` directory to the provisioning pendrive.
 

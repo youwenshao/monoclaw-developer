@@ -28,12 +28,12 @@ explicitly requires them after manifest verification.
 Run the production assembler from the Hatch source directory:
 
 ```bash
-cd hatch
+cd /Users/admin/Projects/hatch
 ./build.sh
 ```
 
-The assembler expects the runtime checkout at `../../monoclaw-runtime` and large,
-non-git inputs under `hatch/bundle-inputs/`. Required production inputs are
+The assembler expects the runtime checkout at `../monoclaw-runtime` and large,
+non-git inputs under `/Users/admin/Projects/hatch/bundle-inputs/`. Required production inputs are
 `bundle-inputs/vendor/lm-studio/LM Studio.app` and
 `bundle-inputs/vendor/models/gemma-4-e4b/gemma-4-e4b.gguf`. Optional vendor
 trees such as `python`, `support`, `browser`, `skills`, and `launchd` are copied

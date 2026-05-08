@@ -22,10 +22,10 @@ obvious, calm, and recoverable for non-technical customer environments.
 
 ## Verification
 
-Run these before handoff:
+Run these from the Hatch checkout before handoff:
 
 ```bash
-bash hatch/bin/hatch --dry-run preflight
-bash -n hatch/bin/hatch
-bash hatch/tests/run_tests.sh
+bash bin/hatch --dry-run preflight
+bash -n bin/hatch
+bash tests/run_tests.sh
 ```

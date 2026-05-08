@@ -5,7 +5,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HATCH_ROOT="${SCRIPT_DIR}"
 
 HATCH_INPUT_ROOT="${HATCH_INPUT_ROOT:-${HATCH_ROOT}/bundle-inputs}"
-HATCH_RUNTIME_ROOT="${HATCH_RUNTIME_ROOT:-$(cd "${HATCH_ROOT}/../.." && pwd)/monoclaw-runtime}"
+if [[ -z "${HATCH_RUNTIME_ROOT:-}" ]]; then
+  if [[ -d "${HATCH_ROOT}/../monoclaw-runtime" ]]; then
+    HATCH_RUNTIME_ROOT="$(cd "${HATCH_ROOT}/../monoclaw-runtime" && pwd)"
+  elif [[ -d "${HATCH_ROOT}/../../monoclaw-runtime" ]]; then
+    HATCH_RUNTIME_ROOT="$(cd "${HATCH_ROOT}/../../monoclaw-runtime" && pwd)"
+  else
+    HATCH_RUNTIME_ROOT="$(cd "${HATCH_ROOT}/.." && pwd)/monoclaw-runtime"
+  fi
+fi
 HATCH_DIST_ROOT="${HATCH_DIST_ROOT:-${HATCH_ROOT}/dist}"
 HATCH_TARGET_ARCH="${HATCH_TARGET_ARCH:-$(uname -m)}"
 HATCH_MINIMUM_MACOS="${HATCH_MINIMUM_MACOS:-14.0}"
