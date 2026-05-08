@@ -91,6 +91,13 @@ def safe_path(relative: str) -> Path:
         raise SystemExit(f"manifest path escapes bundle root: {relative}")
     return candidate
 
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
 runtime = data["runtime"]
 runtime_missing = [
     key for key in ("package", "version", "wheel", "entrypoints")
@@ -116,6 +123,7 @@ for model in data.get("models", []):
     if model.get("required") and path and not safe_path(path).exists():
         raise SystemExit(f"required model path missing: {path}")
 
+listed_files = set()
 for artifact in data["artifacts"]:
     rel = artifact.get("path")
     kind = artifact.get("kind")
@@ -128,14 +136,27 @@ for artifact in data["artifacts"]:
         raise SystemExit(f"artifact kind must be file or directory: {rel}")
     if not path.is_file():
         raise SystemExit(f"artifact file missing: {rel}")
+    listed_files.add(rel)
     expected_bytes = artifact.get("bytes")
+    if expected_bytes is None:
+        raise SystemExit(f"artifact file missing byte size: {rel}")
     if expected_bytes is not None and path.stat().st_size != int(expected_bytes):
         raise SystemExit(f"artifact byte size mismatch: {rel}")
     expected_sha = artifact.get("sha256")
-    if expected_sha:
-        actual_sha = hashlib.sha256(path.read_bytes()).hexdigest()
-        if actual_sha != expected_sha:
-            raise SystemExit(f"artifact sha256 mismatch: {rel}")
+    if not expected_sha:
+        raise SystemExit(f"artifact file missing sha256: {rel}")
+    actual_sha = file_sha256(path)
+    if actual_sha != expected_sha:
+        raise SystemExit(f"artifact sha256 mismatch: {rel}")
+
+for path in root.rglob("*"):
+    if not path.is_file():
+        continue
+    rel = path.relative_to(root).as_posix()
+    if rel == "hatch-manifest.json":
+        continue
+    if rel not in listed_files:
+        raise SystemExit(f"bundle file is not listed in manifest artifacts: {rel}")
 
 print(f"Manifest verified for bundle {data['bundle_id']} ({data['bundle_version']})")
 PY

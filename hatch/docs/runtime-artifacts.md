@@ -23,11 +23,38 @@ Keep these environments separate in code, docs, logs, and product claims:
 Assembly-time dependencies are not target-Mac dependencies unless the installer
 explicitly requires them after manifest verification.
 
+## Assembly Happy Path
+
+Run the production assembler from the Hatch source directory:
+
+```bash
+cd hatch
+./build.sh
+```
+
+The assembler expects the runtime checkout at `../../monoclaw-runtime` and large,
+non-git inputs under `hatch/bundle-inputs/`. Required production inputs are
+`bundle-inputs/vendor/lm-studio/LM Studio.app` and
+`bundle-inputs/vendor/models/gemma-4-e4b/gemma-4-e4b.gguf`. Optional vendor
+trees such as `python`, `support`, `browser`, `skills`, and `launchd` are copied
+when present and represented in the generated manifest.
+
+After `dist/` is copied to a pendrive, the target Mac happy path is:
+
+```bash
+cd /Volumes/<PENDRIVE>/dist
+./install.sh
+```
+
+`install.sh` is generated into the prepared bundle and invokes
+`bin/hatch --apply --bundle-root <dist> install`.
+
 ## Prepared Bundle Layout
 
 ```text
 dist/
   hatch-manifest.json
+  install.sh
   bin/
     hatch
   lib/
@@ -80,8 +107,9 @@ Required top-level fields:
   `sandbox_worker`, and `voice`.
 - `models`: list of bundled model descriptors with `id`, `provider`, `role`,
   `path`, and `required`.
-- `artifacts`: list of files or directories with relative `path`, `kind`,
-  `sha256`, and `bytes`.
+- `artifacts`: list of files with relative `path`, `kind`, `sha256`, and
+  `bytes`. Future manifests may also include directory entries, but file entries
+  are the integrity boundary for generated Hatch bundles.
 
 Every listed path must stay inside the bundle root after symlink resolution.
 Installers must reject absolute paths, `..` traversal, missing required
@@ -108,7 +136,8 @@ artifacts, SHA mismatches, and architecture mismatches.
 `vendor/` is owned by Hatch and can be replaced during install or update.
 `customer/` is preserved unless the technician explicitly confirms a fresh
 reset. Logs may be rotated or captured, but must not be committed to source
-control.
+control. Existing `~/.monoclaw/.env` and `~/.monoclaw/config.yaml` are preserved
+on reruns; Hatch only writes LM Studio defaults when those files do not exist.
 
 ## Target Mac Prerequisites
 

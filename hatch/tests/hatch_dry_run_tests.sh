@@ -115,6 +115,11 @@ cp -R "${BUNDLE}/runtime/." "${HOME_DIR}/.monoclaw/vendor/runtime/"
 cp -R "${BUNDLE}/vendor/lm-studio" "${HOME_DIR}/.monoclaw/vendor/lm-studio"
 cp -R "${BUNDLE}/vendor/models" "${HOME_DIR}/.monoclaw/vendor/models"
 cp "${BUNDLE}/hatch-manifest.json" "${HOME_DIR}/.monoclaw/vendor/hatch-manifest.json"
+
+run_hatch install | tee "${TMP}/existing-config-install.out"
+grep -q "dry-run: keep existing ${HOME_DIR}/.monoclaw/.env" "${TMP}/existing-config-install.out"
+grep -q "dry-run: keep existing ${HOME_DIR}/.monoclaw/config.yaml" "${TMP}/existing-config-install.out"
+
 run_hatch verify | tee "${TMP}/verify.out"
 grep -q "MonoClaw home exists" "${TMP}/verify.out"
 grep -q "vendor runtime assets present" "${TMP}/verify.out"

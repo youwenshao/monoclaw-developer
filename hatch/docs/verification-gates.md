@@ -6,10 +6,27 @@ Run before handing off Hatch script changes:
 
 ```bash
 bash hatch/tests/run_tests.sh
+bash hatch/bin/hatch --dry-run preflight
+bash -n hatch/bin/hatch
 ```
 
-This checks shell syntax and runs the manifest-backed dry-run lifecycle test for
-`preflight`, `install`, `verify`, and `doctor`.
+This checks shell syntax, the manifest-backed dry-run lifecycle test for
+`preflight`, `install`, `verify`, and `doctor`, plus the no-flag `build.sh` and
+generated `install.sh` wrapper using fixture bundle inputs.
+
+## Assembly Gate
+
+Before cutting a production provisioning medium, run the real assembler from
+`hatch/` with production inputs staged in `hatch/bundle-inputs/`:
+
+```bash
+./build.sh
+bash dist/bin/hatch --dry-run --bundle-root dist prepare-bundle
+```
+
+Capture the bundle ID, bundle version, and SHA-256 of `dist/hatch-manifest.json`
+for release evidence. Do not commit `dist/`, `bundle-inputs/`, model weights, or
+vendor payloads.
 
 ## Runtime Gate
 
@@ -47,7 +64,7 @@ bundle and capture:
 
 - Hatch command, bundle ID, bundle version, and manifest hash.
 - `hatch --dry-run --bundle-root <dist> doctor` output.
-- Real `hatch --bundle-root <dist> install` output.
+- Real `./install.sh` output from the copied pendrive `dist/` directory.
 - Fresh-reset rerun output when `MONOCLAW_CONFIRM_FRESH_INSTALL_RESET=1` is
   intentionally set on the bench.
 - `hatch verify` output after restart.

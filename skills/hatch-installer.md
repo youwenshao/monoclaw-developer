@@ -11,6 +11,8 @@ obvious, calm, and recoverable for non-technical customer environments.
 ## Rules
 
 - Default to `--dry-run` for destructive or machine-changing flows.
+- Keep `./build.sh` as the no-flag production bundle assembler from `hatch/`.
+- Keep generated `dist/install.sh` as the no-flag target-Mac installer wrapper.
 - Detect existing MonoClaw and legacy runtime services before installing.
 - Stop and uninstall old gateway services before replacing runtime files.
 - Keep model weights, vendor bundles, logs, and customer overlays out of git.
@@ -25,4 +27,5 @@ Run these before handoff:
 ```bash
 bash hatch/bin/hatch --dry-run preflight
 bash -n hatch/bin/hatch
+bash hatch/tests/run_tests.sh
 ```

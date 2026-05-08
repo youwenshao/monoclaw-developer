@@ -12,6 +12,11 @@ vendor/
 model-cache/
 weights/
 provisioning-logs/
+hatch/dist/
+hatch/bundle-inputs/
+hatch/provisioning-logs/
+hatch/*.tar
+hatch/*.tar.gz
 
 # Tool caches
 .pytest_cache/

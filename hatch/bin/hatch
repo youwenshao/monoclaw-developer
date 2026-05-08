@@ -177,25 +177,41 @@ write_lm_studio_defaults() {
   home_dir="$(monoclaw_home)"
 
   if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
-    printf '  dry-run: write %s with LM Studio defaults\n' "${home_dir}/.env"
-    printf '  dry-run: write %s with LM Studio defaults\n' "${home_dir}/config.yaml"
+    if [[ -f "${home_dir}/.env" ]]; then
+      printf '  dry-run: keep existing %s\n' "${home_dir}/.env"
+    else
+      printf '  dry-run: write %s with LM Studio defaults\n' "${home_dir}/.env"
+    fi
+    if [[ -f "${home_dir}/config.yaml" ]]; then
+      printf '  dry-run: keep existing %s\n' "${home_dir}/config.yaml"
+    else
+      printf '  dry-run: write %s with LM Studio defaults\n' "${home_dir}/config.yaml"
+    fi
     return
   fi
 
-  cat > "${home_dir}/.env" <<'ENV'
+  if [[ -f "${home_dir}/.env" ]]; then
+    log_warn "Keeping existing ${home_dir}/.env; LM Studio defaults were not overwritten"
+  else
+    cat > "${home_dir}/.env" <<'ENV'
 MONOCLAW_MODEL=local:gemma4:e4b
 OPENAI_BASE_URL=http://127.0.0.1:1234/v1
 OPENAI_API_KEY=lm-studio
 ENV
-  chmod 600 "${home_dir}/.env"
+    chmod 600 "${home_dir}/.env"
+  fi
 
-  cat > "${home_dir}/config.yaml" <<'YAML'
+  if [[ -f "${home_dir}/config.yaml" ]]; then
+    log_warn "Keeping existing ${home_dir}/config.yaml; LM Studio defaults were not overwritten"
+  else
+    cat > "${home_dir}/config.yaml" <<'YAML'
 model:
   provider: custom
   model: local:gemma4:e4b
   base_url: http://127.0.0.1:1234/v1
   api_key: lm-studio
 YAML
+  fi
 }
 
 run_install() {
