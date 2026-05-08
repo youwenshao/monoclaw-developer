@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HATCH_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=../lib/common.sh
+source "${HATCH_ROOT}/lib/common.sh"
+
+HATCH_DRY_RUN=false
+COMMAND="preflight"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run)
+      HATCH_DRY_RUN=true
+      shift
+      ;;
+    preflight|cleanup-existing|install|verify)
+      COMMAND="$1"
+      shift
+      ;;
+    -h|--help)
+      cat <<'HELP'
+Hatch provisions Macs for MonoClaw.
+
+Usage:
+  hatch/bin/hatch [--dry-run] preflight
+  hatch/bin/hatch [--dry-run] cleanup-existing
+  hatch/bin/hatch [--dry-run] install
+  hatch/bin/hatch [--dry-run] verify
+HELP
+      exit 0
+      ;;
+    *)
+      printf 'Unknown argument: %s\n' "$1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+macos_version() {
+  sw_vers -productVersion 2>/dev/null || printf 'unknown'
+}
+
+machine_arch() {
+  uname -m 2>/dev/null || printf 'unknown'
+}
+
+check_manual_prerequisites() {
+  log_step "preflight" "Checking manual macOS prerequisites"
+
+  if xcode-select -p >/dev/null 2>&1; then
+    log_ok "Xcode Command Line Tools are installed"
+  else
+    log_warn "Xcode Command Line Tools are missing; run xcode-select --install and complete the macOS prompt"
+  fi
+
+  if [[ -d "/Applications/Docker.app" ]]; then
+    log_ok "Docker Desktop app is present"
+  else
+    log_warn "Docker Desktop is not installed; install it manually if sandboxed tools are required"
+  fi
+}
+
+check_terminal_dependencies() {
+  log_step "preflight" "Checking terminal-manageable dependencies"
+
+  local required=(git python3 curl)
+  for cmd in "${required[@]}"; do
+    if have_command "${cmd}"; then
+      log_ok "${cmd} found"
+    else
+      log_warn "${cmd} missing"
+    fi
+  done
+
+  if have_command brew; then
+    log_ok "Homebrew found"
+  else
+    log_warn "Homebrew missing; future Hatch install steps may install it or request technician action"
+  fi
+
+  if have_command ollama; then
+    log_ok "Ollama found"
+  else
+    log_warn "Ollama missing; future Hatch install steps will install or stage local inference runtime"
+  fi
+}
+
+cleanup_existing_runtime() {
+  log_step "cleanup" "Detecting existing MonoClaw and legacy Hermes runtimes"
+
+  if have_command monoclaw; then
+    log_action monoclaw gateway stop
+    log_action monoclaw gateway uninstall
+  else
+    log_ok "monoclaw command not found"
+  fi
+
+  if have_command hermes; then
+    log_action hermes gateway stop
+    log_action hermes gateway uninstall
+  else
+    log_ok "legacy hermes command not found"
+  fi
+
+  for label in app.monoclaw.gateway ai.hermes.gateway; do
+    if detect_launch_agent "${label}"; then
+      log_action launchctl bootout "gui/$(id -u)/${label}"
+    else
+      log_ok "launchd label ${label} not loaded"
+    fi
+  done
+}
+
+run_preflight() {
+  log_step "system" "macOS $(macos_version), architecture $(machine_arch)"
+  check_manual_prerequisites
+  check_terminal_dependencies
+}
+
+run_install() {
+  run_preflight
+  cleanup_existing_runtime
+  log_step "install" "Runtime installation scaffold"
+  log_warn "Dependency installation, model staging, and runtime copy steps are planned but not implemented in this scaffold"
+}
+
+run_verify() {
+  log_step "verify" "Checking first-run readiness scaffold"
+  if [[ -d "${HOME}/.monoclaw" ]]; then
+    log_ok "MonoClaw home exists at ${HOME}/.monoclaw"
+  else
+    log_warn "MonoClaw home does not exist yet"
+  fi
+}
+
+case "${COMMAND}" in
+  preflight)
+    run_preflight
+    ;;
+  cleanup-existing)
+    cleanup_existing_runtime
+    ;;
+  install)
+    run_install
+    ;;
+  verify)
+    run_verify
+    ;;
+esac
