@@ -14,7 +14,7 @@ expected sibling checkouts under `/Users/admin/Projects`.
 ```text
 Projects/
   monoclaw-developer/   # this coordinator repository
-  monoclaw-runtime/     # Hermes-derived MonoClaw runtime
+  monoclaw-runtime/     # MonoClaw runtime
   monoclaw-web/         # website, checkout, dashboards, docs
   scuttle-reference/    # read-only reference clone of the old installer
 ```
@@ -37,8 +37,7 @@ runtime, website, Hatch, and reference installer from one window.
 
 ## Repository Roles
 
-- `monoclaw-runtime`: the local-first agent runtime, initialized from a squashed
-  Hermes Agent import and rebranded to MonoClaw.
+- `monoclaw-runtime`: the local-first MonoClaw agent runtime.
 - `monoclaw-web`: the existing Next.js 16 / React 19 website, checkout,
   dashboards, legal content, and Supabase schema.
 - `scuttle-reference`: private historical installer/runtime bundle reference.
@@ -47,6 +46,12 @@ runtime, website, Hatch, and reference installer from one window.
 - `hatch`: new installer scaffold for technician provisioning of factory-reset
   Macs with MonoClaw, local inference dependencies, skills, tools, and model
   weights.
+
+## Product Truth
+
+The refresh policy lives in `docs/product-truth-and-attribution.md`. User-facing
+surfaces should say MonoClaw; Hermes/Nous provenance is retained only in legal
+and upstream attribution files.
 
 ## Website Commands
 

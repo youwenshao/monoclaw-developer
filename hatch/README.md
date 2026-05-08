@@ -18,14 +18,31 @@ bash hatch/bin/hatch --dry-run cleanup-existing
 bash hatch/bin/hatch --dry-run install
 ```
 
-Remove `--dry-run` only when running on a machine intended for provisioning.
+Hatch defaults to dry-run. Pass `--apply` only when running on a machine intended
+for provisioning.
+
+## Runtime Artifact Contract
+
+Hatch is bundle-first. The target Mac install path is defined in
+`docs/runtime-artifacts.md`: assembly machines create a prepared `dist/` bundle,
+Hatch verifies `hatch-manifest.json`, and customer Macs receive managed files
+under `~/.monoclaw/vendor` while preserving `~/.monoclaw/customer`.
+
+## Verification
+
+```bash
+bash hatch/tests/run_tests.sh
+```
+
+Release evidence and physical bench expectations are listed in
+`docs/verification-gates.md`.
 
 ## Design Goals
 
 - Make terminal-manageable setup automatic.
 - Explain manual prerequisites such as Xcode CLT prompts and Docker Desktop.
 - Keep local model weights and vendor bundles in managed directories.
-- Stop and uninstall existing MonoClaw or legacy Hermes services before
+- Stop and uninstall existing MonoClaw or legacy runtime services before
   replacing runtime files.
 - Produce clear readiness checks for technicians instead of requiring them to
   read long logs.

@@ -6,8 +6,9 @@ HATCH_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=../lib/common.sh
 source "${HATCH_ROOT}/lib/common.sh"
 
-HATCH_DRY_RUN=false
+HATCH_DRY_RUN=true
 COMMAND="preflight"
+HATCH_BUNDLE_ROOT="${HATCH_ROOT}/dist"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -15,7 +16,15 @@ while [[ $# -gt 0 ]]; do
       HATCH_DRY_RUN=true
       shift
       ;;
-    preflight|cleanup-existing|install|verify)
+    --apply|--no-dry-run)
+      HATCH_DRY_RUN=false
+      shift
+      ;;
+    --bundle-root)
+      HATCH_BUNDLE_ROOT="$(cd "$2" && pwd)"
+      shift 2
+      ;;
+    prepare-bundle|preflight|cleanup-existing|install|verify|doctor)
       COMMAND="$1"
       shift
       ;;
@@ -24,10 +33,14 @@ while [[ $# -gt 0 ]]; do
 Hatch provisions Macs for MonoClaw.
 
 Usage:
-  hatch/bin/hatch [--dry-run] preflight
-  hatch/bin/hatch [--dry-run] cleanup-existing
-  hatch/bin/hatch [--dry-run] install
-  hatch/bin/hatch [--dry-run] verify
+  hatch/bin/hatch [--dry-run|--apply] [--bundle-root dist] prepare-bundle
+  hatch/bin/hatch [--dry-run|--apply] preflight
+  hatch/bin/hatch [--dry-run|--apply] cleanup-existing
+  hatch/bin/hatch [--dry-run|--apply] [--bundle-root dist] install
+  hatch/bin/hatch [--dry-run|--apply] verify
+  hatch/bin/hatch [--dry-run|--apply] doctor
+
+Hatch defaults to dry-run. Pass --apply only on a machine intended for provisioning.
 HELP
       exit 0
       ;;
@@ -62,6 +75,15 @@ check_manual_prerequisites() {
   fi
 }
 
+check_bundle() {
+  log_step "bundle" "Verifying prepared Hatch bundle"
+  if [[ -f "${HATCH_BUNDLE_ROOT}/hatch-manifest.json" ]]; then
+    verify_bundle_manifest "${HATCH_BUNDLE_ROOT}" | sed 's/^/  ok: /'
+  else
+    log_warn "No Hatch manifest found at ${HATCH_BUNDLE_ROOT}/hatch-manifest.json"
+  fi
+}
+
 check_terminal_dependencies() {
   log_step "preflight" "Checking terminal-manageable dependencies"
 
@@ -80,15 +102,15 @@ check_terminal_dependencies() {
     log_warn "Homebrew missing; future Hatch install steps may install it or request technician action"
   fi
 
-  if have_command ollama; then
-    log_ok "Ollama found"
+  if [[ -d "/Applications/LM Studio.app" ]] || [[ -d "${HATCH_BUNDLE_ROOT}/vendor/lm-studio" ]]; then
+    log_ok "LM Studio app is available or staged in the bundle"
   else
-    log_warn "Ollama missing; future Hatch install steps will install or stage local inference runtime"
+    log_warn "LM Studio is not installed or staged; bundle it before provisioning local inference"
   fi
 }
 
 cleanup_existing_runtime() {
-  log_step "cleanup" "Detecting existing MonoClaw and legacy Hermes runtimes"
+  log_step "cleanup" "Detecting existing MonoClaw and legacy runtimes"
 
   if have_command monoclaw; then
     log_action monoclaw gateway stop
@@ -101,7 +123,7 @@ cleanup_existing_runtime() {
     log_action hermes gateway stop
     log_action hermes gateway uninstall
   else
-    log_ok "legacy hermes command not found"
+    log_ok "legacy runtime command not found"
   fi
 
   for label in app.monoclaw.gateway ai.hermes.gateway; do
@@ -115,29 +137,139 @@ cleanup_existing_runtime() {
 
 run_preflight() {
   log_step "system" "macOS $(macos_version), architecture $(machine_arch)"
+  check_bundle
   check_manual_prerequisites
   check_terminal_dependencies
 }
 
+run_prepare_bundle() {
+  log_step "prepare-bundle" "Checking prepared Hatch bundle"
+  verify_bundle_manifest "${HATCH_BUNDLE_ROOT}" | sed 's/^/  ok: /'
+}
+
+install_runtime_assets() {
+  local home_dir
+  home_dir="$(monoclaw_home)"
+
+  log_step "install" "Installing manifest-verified runtime assets"
+  log_action mkdir -p "${home_dir}/vendor"
+  log_action mkdir -p "${home_dir}/customer"
+  log_action mkdir -p "${home_dir}/logs"
+  log_action cp "${HATCH_BUNDLE_ROOT}/hatch-manifest.json" "${home_dir}/vendor/hatch-manifest.json"
+
+  if [[ -d "${HATCH_BUNDLE_ROOT}/runtime" ]]; then
+    log_action rm -rf "${home_dir}/vendor/runtime"
+    log_action cp -R "${HATCH_BUNDLE_ROOT}/runtime" "${home_dir}/vendor/runtime"
+  else
+    log_warn "Bundle runtime directory missing; manifest may describe an external wheel-only bundle"
+  fi
+
+  for asset in python support lm-studio models browser skills launchd; do
+    if [[ -d "${HATCH_BUNDLE_ROOT}/vendor/${asset}" ]]; then
+      log_action rm -rf "${home_dir}/vendor/${asset}"
+      log_action cp -R "${HATCH_BUNDLE_ROOT}/vendor/${asset}" "${home_dir}/vendor/${asset}"
+    fi
+  done
+}
+
+write_lm_studio_defaults() {
+  local home_dir
+  home_dir="$(monoclaw_home)"
+
+  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+    printf '  dry-run: write %s with LM Studio defaults\n' "${home_dir}/.env"
+    printf '  dry-run: write %s with LM Studio defaults\n' "${home_dir}/config.yaml"
+    return
+  fi
+
+  cat > "${home_dir}/.env" <<'ENV'
+MONOCLAW_MODEL=local:gemma4:e4b
+OPENAI_BASE_URL=http://127.0.0.1:1234/v1
+OPENAI_API_KEY=lm-studio
+ENV
+  chmod 600 "${home_dir}/.env"
+
+  cat > "${home_dir}/config.yaml" <<'YAML'
+model:
+  provider: custom
+  model: local:gemma4:e4b
+  base_url: http://127.0.0.1:1234/v1
+  api_key: lm-studio
+YAML
+}
+
 run_install() {
   run_preflight
+  verify_bundle_manifest "${HATCH_BUNDLE_ROOT}" >/dev/null
   cleanup_existing_runtime
-  log_step "install" "Runtime installation scaffold"
-  log_warn "Dependency installation, model staging, and runtime copy steps are planned but not implemented in this scaffold"
+  install_runtime_assets
+  write_lm_studio_defaults
+  log_step "install" "Service bootstrap scaffold"
+  log_warn "launchd service installation and local agent smoke checks are not enabled until bundle plists are finalized"
 }
 
 run_verify() {
-  log_step "verify" "Checking first-run readiness scaffold"
-  if [[ -d "${HOME}/.monoclaw" ]]; then
-    log_ok "MonoClaw home exists at ${HOME}/.monoclaw"
+  local home_dir
+  home_dir="$(monoclaw_home)"
+
+  log_step "verify" "Checking first-run readiness"
+  if [[ -d "${home_dir}" ]]; then
+    log_ok "MonoClaw home exists at ${home_dir}"
   else
     log_warn "MonoClaw home does not exist yet"
   fi
+
+  if [[ -d "${home_dir}/vendor/runtime" ]]; then
+    log_ok "vendor runtime assets present"
+  else
+    log_warn "vendor runtime assets are missing"
+  fi
+
+  if [[ -f "${home_dir}/vendor/hatch-manifest.json" ]]; then
+    log_ok "installed Hatch manifest present"
+  else
+    log_warn "installed Hatch manifest is missing"
+  fi
+
+  if [[ -d "${home_dir}/vendor/lm-studio" ]]; then
+    log_ok "LM Studio bundle present"
+  else
+    log_warn "LM Studio bundle is missing"
+  fi
+
+  if [[ -f "${home_dir}/vendor/models/gemma-4-e4b/gemma-4-e4b.gguf" ]]; then
+    log_ok "Gemma 4 E4B model present"
+  else
+    log_warn "Gemma 4 E4B model is missing"
+  fi
+
+  if [[ -f "${home_dir}/.env" ]] \
+    && grep -q "OPENAI_BASE_URL=http://127.0.0.1:1234/v1" "${home_dir}/.env" \
+    && grep -q "MONOCLAW_MODEL=local:gemma4:e4b" "${home_dir}/.env"; then
+    log_ok "LM Studio runtime defaults present"
+  else
+    log_warn "LM Studio runtime defaults are missing"
+  fi
+
+  if [[ -d "${home_dir}/logs" && -w "${home_dir}/logs" ]]; then
+    log_ok "logs directory is writable"
+  else
+    log_warn "logs directory is missing or not writable"
+  fi
+}
+
+run_doctor() {
+  run_preflight
+  run_verify
+  log_step "doctor" "Hatch doctor complete"
 }
 
 case "${COMMAND}" in
   preflight)
     run_preflight
+    ;;
+  prepare-bundle)
+    run_prepare_bundle
     ;;
   cleanup-existing)
     cleanup_existing_runtime
@@ -147,5 +279,8 @@ case "${COMMAND}" in
     ;;
   verify)
     run_verify
+    ;;
+  doctor)
+    run_doctor
     ;;
 esac
