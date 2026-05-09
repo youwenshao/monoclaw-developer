@@ -22,10 +22,22 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def is_ignored_metadata(path: Path, root: Path) -> bool:
+    rel = path.relative_to(root)
+    parts = rel.parts
+    return (
+        path.name == ".DS_Store"
+        or path.name.startswith("._")
+        or any(part in {"__MACOSX", ".Spotlight-V100", ".fseventsd", ".Trashes"} for part in parts)
+    )
+
+
 def collect_artifacts(root: Path) -> list[dict[str, object]]:
     artifacts: list[dict[str, object]] = []
     for path in sorted(root.rglob("*")):
         if not path.is_file():
+            continue
+        if is_ignored_metadata(path, root):
             continue
         rel = relative_path(path, root)
         if rel == "hatch-manifest.json":
@@ -39,6 +51,31 @@ def collect_artifacts(root: Path) -> list[dict[str, object]]:
             }
         )
     return artifacts
+
+
+def find_runtime_wheel(root: Path) -> Path:
+    wheels = sorted((root / "runtime").glob("monoclaw_runtime-*.whl"))
+    if not wheels:
+        legacy = root / "runtime" / "monoclaw-runtime.whl"
+        if legacy.is_file():
+            return legacy
+        raise SystemExit(f"runtime wheel missing under {root / 'runtime'}")
+    return wheels[-1]
+
+
+def collect_models(root: Path) -> list[dict[str, object]]:
+    gemma = root / "vendor" / "models" / "gemma-4-e4b" / "gemma-4-e4b.gguf"
+    if not gemma.is_file():
+        return []
+    return [
+        {
+            "id": "local:gemma4:e4b",
+            "provider": "lm-studio",
+            "role": "chat",
+            "path": "vendor/models/gemma-4-e4b/gemma-4-e4b.gguf",
+            "required": False,
+        }
+    ]
 
 
 def parse_args() -> argparse.Namespace:
@@ -55,13 +92,12 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     root = Path(args.bundle_root).resolve()
-    wheel = root / "runtime" / "monoclaw-runtime.whl"
-    model = root / "vendor" / "models" / "gemma-4-e4b" / "gemma-4-e4b.gguf"
+    wheel = find_runtime_wheel(root)
+    models = collect_models(root)
+    has_local_model = bool(models)
 
     if not wheel.is_file():
         raise SystemExit(f"runtime wheel missing: {wheel}")
-    if not model.is_file():
-        raise SystemExit(f"Gemma 4 E4B model missing: {model}")
 
     manifest = {
         "schema_version": 1,
@@ -76,26 +112,18 @@ def main() -> None:
         "runtime": {
             "package": "monoclaw-runtime",
             "version": args.runtime_version,
-            "wheel": "runtime/monoclaw-runtime.whl",
+            "wheel": relative_path(wheel, root),
             "entrypoints": ["monoclaw", "monoclaw-agent", "monoclaw-acp"],
         },
         "capabilities": {
-            "local_inference": True,
-            "lm_studio": True,
+            "local_inference": has_local_model,
+            "lm_studio": has_local_model,
             "telegram_gateway": True,
             "browser_automation": (root / "vendor" / "browser").is_dir(),
             "sandbox_worker": (root / "vendor" / "support").is_dir(),
             "voice": False,
         },
-        "models": [
-            {
-                "id": "local:gemma4:e4b",
-                "provider": "lm-studio",
-                "role": "chat",
-                "path": "vendor/models/gemma-4-e4b/gemma-4-e4b.gguf",
-                "required": True,
-            }
-        ],
+        "models": models,
         "artifacts": collect_artifacts(root),
     }
 

@@ -15,6 +15,7 @@ if [[ -z "${HATCH_RUNTIME_ROOT:-}" ]]; then
   fi
 fi
 HATCH_DIST_ROOT="${HATCH_DIST_ROOT:-${HATCH_ROOT}/dist}"
+HATCH_MODEL_PACKS_ROOT="${HATCH_MODEL_PACKS_ROOT:-$(cd "$(dirname "${HATCH_DIST_ROOT}")" && pwd)/model-packs}"
 HATCH_TARGET_ARCH="${HATCH_TARGET_ARCH:-$(uname -m)}"
 HATCH_MINIMUM_MACOS="${HATCH_MINIMUM_MACOS:-14.0}"
 
@@ -96,7 +97,7 @@ build_runtime_wheel() {
 
   if [[ -n "${HATCH_RUNTIME_WHEEL:-}" ]]; then
     require_file "${HATCH_RUNTIME_WHEEL}" "runtime wheel override is missing"
-    cp "${HATCH_RUNTIME_WHEEL}" "${wheel_dir}/monoclaw-runtime.whl"
+    cp "${HATCH_RUNTIME_WHEEL}" "${wheel_dir}/$(basename "${HATCH_RUNTIME_WHEEL}")"
     return
   fi
 
@@ -112,8 +113,7 @@ build_runtime_wheel() {
   log "Building monoclaw-runtime wheel"
   "${python_bin}" -m build --wheel --outdir "${wheel_dir}" "${HATCH_RUNTIME_ROOT}"
 
-  local built_wheel
-  built_wheel="$(python3 - "${wheel_dir}" <<'PY'
+  python3 - "${wheel_dir}" <<'PY'
 import sys
 from pathlib import Path
 
@@ -121,10 +121,39 @@ wheel_dir = Path(sys.argv[1])
 wheels = sorted(wheel_dir.glob("monoclaw_runtime-*.whl"))
 if not wheels:
     raise SystemExit("no monoclaw_runtime wheel was produced")
-print(wheels[-1])
 PY
-)"
-  mv "${built_wheel}" "${wheel_dir}/monoclaw-runtime.whl"
+}
+
+verify_runtime_python_bundle() {
+  local python_bin="${HATCH_INPUT_ROOT}/vendor/python/current/bin/python3"
+  require_file "${python_bin}" "Python 3.11+ runtime bundle is required"
+
+  "${python_bin}" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' \
+    || die "Python runtime bundle must be Python 3.11+: ${python_bin}"
+
+  if [[ "${HATCH_SKIP_RUNTIME_PYTHON_SMOKE:-0}" == "1" ]]; then
+    log "Skipping runtime Python smoke test because HATCH_SKIP_RUNTIME_PYTHON_SMOKE=1"
+    return
+  fi
+
+  local smoke_dir
+  smoke_dir="$(mktemp -d)"
+  trap 'rm -rf "${smoke_dir}"' RETURN
+  log "Smoke testing bundled Python runtime"
+  "${python_bin}" -m venv "${smoke_dir}/venv"
+  "${smoke_dir}/venv/bin/python" -m pip --version >/dev/null
+  rm -rf "${smoke_dir}"
+  trap - RETURN
+}
+
+verify_runtime_wheelhouse() {
+  local wheelhouse="${HATCH_INPUT_ROOT}/vendor/wheelhouse"
+  if [[ ! -d "${wheelhouse}" ]]; then
+    die "runtime wheelhouse is required for production bundles: ${wheelhouse}; run: bash scripts/build_wheelhouse.sh"
+  fi
+  if [[ -z "$(ls -A "${wheelhouse}" 2>/dev/null || true)" ]]; then
+    die "runtime wheelhouse must contain local-office dependency wheels: ${wheelhouse}; run: bash scripts/build_wheelhouse.sh"
+  fi
 }
 
 copy_optional_vendor_asset() {
@@ -136,12 +165,46 @@ copy_optional_vendor_asset() {
   fi
 }
 
+stage_model_packs() {
+  local source_model="${HATCH_INPUT_ROOT}/vendor/models/gemma-4-e4b/gemma-4-e4b.gguf"
+  local pack_root="${HATCH_MODEL_PACKS_ROOT}/gemma-4-e4b"
+
+  rm -rf "${pack_root}"
+  if [[ ! -f "${source_model}" ]]; then
+    log "No Gemma 4 E4B model input found; skipping optional model pack"
+    return
+  fi
+
+  log "Staging optional Gemma 4 E4B model pack"
+  mkdir -p "${pack_root}"
+  cp "${source_model}" "${pack_root}/gemma-4-e4b.gguf"
+  python3 "${HATCH_ROOT}/scripts/generate_model_pack_manifest.py" \
+    --model-pack-root "${pack_root}" \
+    --model-id "local:gemma4:e4b" \
+    --provider "lm-studio" \
+    --role "chat" \
+    --model-file "gemma-4-e4b.gguf"
+}
+
+stage_runtime_skills() {
+  if [[ -d "${HATCH_DIST_ROOT}/vendor/skills" ]]; then
+    log "Using curated vendor/skills from bundle inputs"
+    return
+  fi
+
+  if [[ -d "${HATCH_RUNTIME_ROOT}/skills" ]]; then
+    log "Staging runtime bundled skills"
+    mkdir -p "${HATCH_DIST_ROOT}/vendor"
+    cp -R "${HATCH_RUNTIME_ROOT}/skills" "${HATCH_DIST_ROOT}/vendor/skills"
+  fi
+}
+
 stage_bundle() {
   require_dir "${HATCH_INPUT_ROOT}" "bundle input directory is missing"
   require_dir "${HATCH_RUNTIME_ROOT}" "runtime checkout is missing"
   require_file "${HATCH_RUNTIME_ROOT}/pyproject.toml" "runtime pyproject is missing"
-  require_dir "${HATCH_INPUT_ROOT}/vendor/lm-studio/LM Studio.app" "LM Studio app bundle is required"
-  require_file "${HATCH_INPUT_ROOT}/vendor/models/gemma-4-e4b/gemma-4-e4b.gguf" "Gemma 4 E4B model is required"
+  verify_runtime_python_bundle
+  verify_runtime_wheelhouse
   validate_dist_root
 
   rm -rf "${HATCH_DIST_ROOT}"
@@ -150,8 +213,9 @@ stage_bundle() {
   cp "${HATCH_ROOT}/bin/hatch" "${HATCH_DIST_ROOT}/bin/hatch"
   cp "${HATCH_ROOT}/lib/common.sh" "${HATCH_DIST_ROOT}/lib/common.sh"
   cp "${HATCH_ROOT}/templates/install.sh" "${HATCH_DIST_ROOT}/install.sh"
+  cp "${HATCH_ROOT}/templates/install-gemma-model.sh" "${HATCH_DIST_ROOT}/install-gemma-model.sh"
   cp "${HATCH_ROOT}/tests/hatch_dry_run_tests.sh" "${HATCH_DIST_ROOT}/tests/run-hatch-dry-run.sh"
-  chmod +x "${HATCH_DIST_ROOT}/bin/hatch" "${HATCH_DIST_ROOT}/install.sh" "${HATCH_DIST_ROOT}/tests/run-hatch-dry-run.sh"
+  chmod +x "${HATCH_DIST_ROOT}/bin/hatch" "${HATCH_DIST_ROOT}/install.sh" "${HATCH_DIST_ROOT}/install-gemma-model.sh" "${HATCH_DIST_ROOT}/tests/run-hatch-dry-run.sh"
 
   build_runtime_web_assets
   build_runtime_wheel "${HATCH_DIST_ROOT}/runtime"
@@ -170,12 +234,14 @@ EOF
 # profile. Install the bundled runtime with the local-office extra from the
 # adjacent wheel:
 #
-#   python -m pip install "./monoclaw-runtime.whl[local-office]"
+#   python -m pip install "./monoclaw_runtime-<version>-py3-none-any.whl[local-office]"
 EOF
 
-  for asset in lm-studio models python support browser skills launchd; do
+  for asset in python support browser skills launchd wheelhouse; do
     copy_optional_vendor_asset "${asset}"
   done
+  stage_runtime_skills
+  stage_model_packs
 
   python3 "${HATCH_ROOT}/scripts/generate_manifest.py" \
     --bundle-root "${HATCH_DIST_ROOT}" \

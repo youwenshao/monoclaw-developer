@@ -11,8 +11,9 @@ bash -n bin/hatch
 ```
 
 This checks shell syntax, the manifest-backed dry-run lifecycle test for
-`preflight`, `install`, `verify`, and `doctor`, plus the no-flag `build.sh` and
-generated `install.sh` wrapper using fixture bundle inputs.
+`preflight`, `install`, `verify`, `verify-local-inference`, `doctor`, and the
+optional model-pack commands, plus the no-flag `build.sh` and generated install
+wrappers using fixture bundle inputs.
 
 ## Assembly Gate
 
@@ -21,13 +22,18 @@ Before cutting a production provisioning medium, run the real assembler from
 `/Users/admin/Projects/hatch/bundle-inputs/`:
 
 ```bash
+bash scripts/build_wheelhouse.sh
 ./build.sh
 bash dist/bin/hatch --dry-run --bundle-root dist prepare-bundle
+if [[ -d model-packs/gemma-4-e4b ]]; then
+  bash dist/bin/hatch --dry-run --bundle-root dist --model-pack-root model-packs/gemma-4-e4b verify-model-pack
+fi
 ```
 
 Capture the bundle ID, bundle version, and SHA-256 of `dist/hatch-manifest.json`
-for release evidence. Do not commit `dist/`, `bundle-inputs/`, model weights, or
-vendor payloads.
+for release evidence. If a model pack is present, also capture the SHA-256 of
+`model-packs/gemma-4-e4b/model-pack-manifest.json`. Do not commit `dist/`,
+`bundle-inputs/`, `model-packs/`, model weights, or vendor payloads.
 
 ## Runtime Gate
 
@@ -66,9 +72,14 @@ bundle and capture:
 - Hatch command, bundle ID, bundle version, and manifest hash.
 - `hatch --dry-run --bundle-root <dist> doctor` output.
 - Real `./install.sh` output from the copied pendrive `dist/` directory.
+- Optional `./install-gemma-model.sh` output when the pendrive includes
+  `model-packs/gemma-4-e4b/`.
+- Manual LM Studio `.dmg` install and first-launch/import notes when local
+  inference is part of the bench scenario.
 - Fresh-reset rerun output when `MONOCLAW_CONFIRM_FRESH_INSTALL_RESET=1` is
   intentionally set on the bench.
-- `hatch verify` output after restart.
+- `hatch verify` output after restart, plus `hatch verify-local-inference` when
+  local inference was configured.
 - Redacted `~/.monoclaw/logs` tails and launchd summaries.
 
 Do not capture customer secrets, Telegram tokens, hosted-provider API keys,

@@ -43,15 +43,36 @@ monoclaw_home() {
   printf '%s\n' "${MONOCLAW_HOME:-${HOME}/.monoclaw}"
 }
 
+hatch_manifest_python() {
+  local bundle_root="${1:-}"
+  local candidate
+  for candidate in \
+    "${bundle_root}/vendor/python/current/bin/python3" \
+    "${bundle_root}/vendor/python/current/bin/python3.13" \
+    "${bundle_root}/vendor/python/current/bin/python3.12" \
+    "${bundle_root}/vendor/python/current/bin/python3.11"; do
+    if [[ -x "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+  if have_command python3; then
+    command -v python3
+    return 0
+  fi
+  return 1
+}
+
 verify_bundle_manifest() {
   local bundle_root="${1:-}"
   local manifest="${bundle_root}/hatch-manifest.json"
+  local python_bin
 
   [[ -n "${bundle_root}" ]] || die "bundle root is empty"
   [[ -f "${manifest}" ]] || die "bundle manifest not found at ${manifest}"
-  have_command python3 || die "python3 is required to verify the Hatch manifest"
+  python_bin="$(hatch_manifest_python "${bundle_root}")" || die "Python is required to verify the Hatch manifest"
 
-  HATCH_BUNDLE_ROOT="${bundle_root}" HATCH_HOST_ARCH="$(uname -m)" python3 <<'PY'
+  PYTHONDONTWRITEBYTECODE=1 HATCH_BUNDLE_ROOT="${bundle_root}" HATCH_HOST_ARCH="$(uname -m)" "${python_bin}" <<'PY'
 import hashlib
 import json
 import os
@@ -97,6 +118,15 @@ def file_sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+def is_ignored_metadata(path: Path) -> bool:
+    rel = path.relative_to(root)
+    parts = rel.parts
+    return (
+        path.name == ".DS_Store"
+        or path.name.startswith("._")
+        or any(part in {"__MACOSX", ".Spotlight-V100", ".fseventsd", ".Trashes"} for part in parts)
+    )
 
 runtime = data["runtime"]
 runtime_missing = [
@@ -152,6 +182,8 @@ for artifact in data["artifacts"]:
 for path in root.rglob("*"):
     if not path.is_file():
         continue
+    if is_ignored_metadata(path):
+        continue
     rel = path.relative_to(root).as_posix()
     if rel == "hatch-manifest.json":
         continue
@@ -159,5 +191,101 @@ for path in root.rglob("*"):
         raise SystemExit(f"bundle file is not listed in manifest artifacts: {rel}")
 
 print(f"Manifest verified for bundle {data['bundle_id']} ({data['bundle_version']})")
+PY
+}
+
+verify_model_pack_manifest() {
+  local pack_root="${1:-}"
+  local manifest="${pack_root}/model-pack-manifest.json"
+  local python_bin
+
+  [[ -n "${pack_root}" ]] || die "model pack root is empty"
+  [[ -f "${manifest}" ]] || die "model pack manifest not found at ${manifest}"
+  python_bin="$(hatch_manifest_python "${HATCH_BUNDLE_ROOT:-}")" || die "Python is required to verify the model pack manifest"
+
+  PYTHONDONTWRITEBYTECODE=1 HATCH_MODEL_PACK_ROOT="${pack_root}" "${python_bin}" <<'PY'
+import hashlib
+import json
+import os
+from pathlib import Path
+
+root = Path(os.environ["HATCH_MODEL_PACK_ROOT"]).resolve()
+manifest_path = root / "model-pack-manifest.json"
+data = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+required = ["schema_version", "model", "artifacts"]
+missing = [key for key in required if key not in data]
+if missing:
+    raise SystemExit(f"model pack manifest missing required fields: {', '.join(missing)}")
+
+model = data["model"]
+model_missing = [
+    key for key in ("id", "provider", "role", "path")
+    if key not in model or model[key] in (None, "", [])
+]
+if model_missing:
+    raise SystemExit(f"model pack manifest missing model fields: {', '.join(model_missing)}")
+
+def safe_path(relative: str) -> Path:
+    if not isinstance(relative, str) or not relative:
+        raise SystemExit("model pack paths must be non-empty strings")
+    candidate = (root / relative).resolve()
+    if candidate != root and root not in candidate.parents:
+        raise SystemExit(f"model pack path escapes root: {relative}")
+    return candidate
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+def is_ignored_metadata(path: Path) -> bool:
+    rel = path.relative_to(root)
+    parts = rel.parts
+    return (
+        path.name == ".DS_Store"
+        or path.name.startswith("._")
+        or any(part in {"__MACOSX", ".Spotlight-V100", ".fseventsd", ".Trashes"} for part in parts)
+    )
+
+model_path = safe_path(model["path"])
+if not model_path.is_file():
+    raise SystemExit(f"model pack file missing: {model['path']}")
+
+listed_files = set()
+for artifact in data["artifacts"]:
+    rel = artifact.get("path")
+    kind = artifact.get("kind")
+    path = safe_path(rel)
+    if kind != "file":
+        raise SystemExit(f"model pack artifact kind must be file: {rel}")
+    if not path.is_file():
+        raise SystemExit(f"model pack file missing: {rel}")
+    listed_files.add(rel)
+    expected_bytes = artifact.get("bytes")
+    if expected_bytes is None:
+        raise SystemExit(f"model pack file missing byte size: {rel}")
+    if path.stat().st_size != int(expected_bytes):
+        raise SystemExit(f"model pack file byte size mismatch: {rel}")
+    expected_sha = artifact.get("sha256")
+    if not expected_sha:
+        raise SystemExit(f"model pack file missing sha256: {rel}")
+    if file_sha256(path) != expected_sha:
+        raise SystemExit(f"model pack file sha256 mismatch: {rel}")
+
+for path in root.rglob("*"):
+    if not path.is_file():
+        continue
+    if is_ignored_metadata(path):
+        continue
+    rel = path.relative_to(root).as_posix()
+    if rel == "model-pack-manifest.json":
+        continue
+    if rel not in listed_files:
+        raise SystemExit(f"model pack file is not listed in manifest artifacts: {rel}")
+
+print(f"Model pack verified for {model['id']} ({model_path.stat().st_size} bytes)")
 PY
 }

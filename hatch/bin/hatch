@@ -9,6 +9,7 @@ source "${HATCH_ROOT}/lib/common.sh"
 HATCH_DRY_RUN=true
 COMMAND="preflight"
 HATCH_BUNDLE_ROOT="${HATCH_ROOT}/dist"
+HATCH_MODEL_PACK_ROOT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -24,7 +25,11 @@ while [[ $# -gt 0 ]]; do
       HATCH_BUNDLE_ROOT="$(cd "$2" && pwd)"
       shift 2
       ;;
-    prepare-bundle|preflight|cleanup-existing|install|verify|doctor)
+    --model-pack-root)
+      HATCH_MODEL_PACK_ROOT="$(cd "$2" && pwd)"
+      shift 2
+      ;;
+    prepare-bundle|preflight|cleanup-existing|install|verify|doctor|verify-local-inference|verify-model-pack|install-model)
       COMMAND="$1"
       shift
       ;;
@@ -37,7 +42,9 @@ Usage:
   hatch/bin/hatch [--dry-run|--apply] preflight
   hatch/bin/hatch [--dry-run|--apply] cleanup-existing
   hatch/bin/hatch [--dry-run|--apply] [--bundle-root dist] install
+  hatch/bin/hatch [--dry-run|--apply] [--bundle-root dist] [--model-pack-root model-packs/gemma-4-e4b] install-model
   hatch/bin/hatch [--dry-run|--apply] verify
+  hatch/bin/hatch [--dry-run|--apply] verify-local-inference
   hatch/bin/hatch [--dry-run|--apply] doctor
 
 Hatch defaults to dry-run. Pass --apply only on a machine intended for provisioning.
@@ -51,6 +58,10 @@ HELP
   esac
 done
 
+if [[ -z "${HATCH_MODEL_PACK_ROOT}" ]]; then
+  HATCH_MODEL_PACK_ROOT="$(cd "${HATCH_BUNDLE_ROOT}/.." && pwd)/model-packs/gemma-4-e4b"
+fi
+
 macos_version() {
   sw_vers -productVersion 2>/dev/null || printf 'unknown'
 }
@@ -59,13 +70,163 @@ machine_arch() {
   uname -m 2>/dev/null || printf 'unknown'
 }
 
+is_macos() {
+  [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]]
+}
+
+warn_or_die() {
+  local message="$1"
+  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+    log_warn "${message}"
+  else
+    die "${message}"
+  fi
+}
+
+homebrew_executable() {
+  if [[ "${HATCH_FORCE_HOMEBREW_MISSING:-0}" == "1" ]]; then
+    return 1
+  fi
+  if have_command brew; then
+    command -v brew
+    return 0
+  fi
+  for candidate in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+    if [[ -x "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+activate_homebrew() {
+  local brew_bin
+  if ! brew_bin="$(homebrew_executable)"; then
+    return 1
+  fi
+  eval "$("${brew_bin}" shellenv)"
+  return 0
+}
+
+default_homebrew_prefix() {
+  if [[ "$(machine_arch)" == "arm64" ]]; then
+    printf '/opt/homebrew\n'
+  else
+    printf '/usr/local\n'
+  fi
+}
+
+homebrew_prefix() {
+  local brew_bin
+  if brew_bin="$(homebrew_executable)"; then
+    "${brew_bin}" --prefix 2>/dev/null || dirname "$(dirname "${brew_bin}")"
+  else
+    default_homebrew_prefix
+  fi
+}
+
+prepend_path_var() {
+  local var_name="$1"
+  local value="$2"
+  local current="${!var_name:-}"
+
+  if [[ -z "${current}" ]]; then
+    export "${var_name}=${value}"
+  elif [[ ":${current}:" != *":${value}:"* ]]; then
+    export "${var_name}=${value}:${current}"
+  fi
+}
+
+configure_homebrew_python_library_paths() {
+  local prefix
+  local expat_lib
+  local prefix_lib
+  prefix="$(homebrew_prefix)"
+  expat_lib="${prefix}/opt/expat/lib"
+  prefix_lib="${prefix}/lib"
+
+  prepend_path_var DYLD_LIBRARY_PATH "${prefix_lib}"
+  prepend_path_var DYLD_LIBRARY_PATH "${expat_lib}"
+  prepend_path_var DYLD_FALLBACK_LIBRARY_PATH "${prefix_lib}"
+  prepend_path_var DYLD_FALLBACK_LIBRARY_PATH "${expat_lib}"
+
+  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+    printf '  dry-run: export DYLD_LIBRARY_PATH=%s\n' "${DYLD_LIBRARY_PATH}"
+    printf '  dry-run: export DYLD_FALLBACK_LIBRARY_PATH=%s\n' "${DYLD_FALLBACK_LIBRARY_PATH}"
+  fi
+}
+
+install_homebrew_if_missing() {
+  local brew_bin
+
+  if brew_bin="$(homebrew_executable)"; then
+    activate_homebrew || true
+    log_ok "Homebrew found at ${brew_bin}"
+    return
+  fi
+
+  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+    printf '  dry-run: install Homebrew with official installer\n'
+    printf '  dry-run: /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"\n'
+    return
+  fi
+
+  if [[ "${HATCH_SKIP_HOMEBREW_INSTALL:-0}" == "1" ]]; then
+    log_warn "Skipping Homebrew installation because HATCH_SKIP_HOMEBREW_INSTALL=1"
+    return
+  fi
+
+  log_warn "Homebrew missing; installing with the official Homebrew installer"
+  NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+  if activate_homebrew; then
+    configure_homebrew_python_library_paths
+    log_ok "Homebrew installed and activated for this shell"
+  else
+    die "Homebrew installation finished but brew was not found; open a new terminal or run /opt/homebrew/bin/brew shellenv, then rerun Hatch"
+  fi
+}
+
+ensure_runtime_python_available() {
+  local home_dir
+  local runtime_python
+  home_dir="$(monoclaw_home)"
+
+  if [[ "${HATCH_SKIP_RUNTIME_BOOTSTRAP:-0}" == "1" ]]; then
+    log_warn "Skipping Python 3.11+ runtime check because HATCH_SKIP_RUNTIME_BOOTSTRAP=1"
+    return
+  fi
+
+  if runtime_python="$(select_runtime_python "${home_dir}")"; then
+    log_ok "Python 3.11+ runtime interpreter available at ${runtime_python} ($(python_version_string "${runtime_python}"))"
+    return
+  fi
+
+  if runtime_python="$(select_bundle_runtime_python)"; then
+    log_ok "Python 3.11+ runtime interpreter available at ${runtime_python} ($(python_version_string "${runtime_python}"))"
+    return
+  fi
+
+  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+    log_warn "Python 3.11+ runtime interpreter missing; bundle vendor/python/current/bin/python3"
+    return
+  fi
+
+  die "Python 3.11+ runtime interpreter missing; rebuild the bundle with vendor/python/current/bin/python3"
+}
+
 check_manual_prerequisites() {
   log_step "preflight" "Checking manual macOS prerequisites"
 
-  if xcode-select -p >/dev/null 2>&1; then
-    log_ok "Xcode Command Line Tools are installed"
+  if is_macos; then
+    if command -v xcode-select >/dev/null 2>&1 && xcode-select -p >/dev/null 2>&1; then
+      log_ok "Xcode Command Line Tools are installed"
+    else
+      warn_or_die "Xcode Command Line Tools are missing; run xcode-select --install and complete the macOS prompt"
+    fi
   else
-    log_warn "Xcode Command Line Tools are missing; run xcode-select --install and complete the macOS prompt"
+    log_warn "Xcode Command Line Tools check skipped; Hatch target installs are intended for macOS"
   fi
 
   if [[ -d "/Applications/Docker.app" ]]; then
@@ -87,25 +248,22 @@ check_bundle() {
 check_terminal_dependencies() {
   log_step "preflight" "Checking terminal-manageable dependencies"
 
-  local required=(git python3 curl)
+  local required=(curl)
   for cmd in "${required[@]}"; do
     if have_command "${cmd}"; then
       log_ok "${cmd} found"
     else
-      log_warn "${cmd} missing"
+      warn_or_die "${cmd} missing"
     fi
   done
 
-  if have_command brew; then
-    log_ok "Homebrew found"
-  else
-    log_warn "Homebrew missing; future Hatch install steps may install it or request technician action"
-  fi
+  install_homebrew_if_missing
+  ensure_runtime_python_available
 
-  if [[ -d "/Applications/LM Studio.app" ]] || [[ -d "${HATCH_BUNDLE_ROOT}/vendor/lm-studio" ]]; then
-    log_ok "LM Studio app is available or staged in the bundle"
+  if [[ -d "/Applications/LM Studio.app" ]]; then
+    log_ok "LM Studio app is present"
   else
-    log_warn "LM Studio is not installed or staged; bundle it before provisioning local inference"
+    log_warn "LM Studio app is missing; install it manually from the official .dmg if local inference is required"
   fi
 }
 
@@ -137,14 +295,121 @@ cleanup_existing_runtime() {
 
 run_preflight() {
   log_step "system" "macOS $(macos_version), architecture $(machine_arch)"
-  check_bundle
   check_manual_prerequisites
   check_terminal_dependencies
+  check_bundle
 }
 
 run_prepare_bundle() {
   log_step "prepare-bundle" "Checking prepared Hatch bundle"
   verify_bundle_manifest "${HATCH_BUNDLE_ROOT}" | sed 's/^/  ok: /'
+}
+
+runtime_manifest_field() {
+  local field="$1"
+  local python_bin
+  python_bin="$(hatch_manifest_python "${HATCH_BUNDLE_ROOT}")"
+  PYTHONDONTWRITEBYTECODE=1 HATCH_BUNDLE_ROOT="${HATCH_BUNDLE_ROOT}" "${python_bin}" - "${field}" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+field = sys.argv[1]
+manifest = Path(os.environ["HATCH_BUNDLE_ROOT"]) / "hatch-manifest.json"
+data = json.loads(manifest.read_text(encoding="utf-8"))
+value = data.get("runtime", {}).get(field, "")
+if value:
+    print(value)
+PY
+}
+
+is_valid_wheel_filename() {
+  local wheel_path="$1"
+  local python_bin
+  python_bin="$(hatch_manifest_python "${HATCH_BUNDLE_ROOT}")"
+  PYTHONDONTWRITEBYTECODE=1 "${python_bin}" - "${wheel_path}" <<'PY'
+import sys
+from pathlib import Path
+
+name = Path(sys.argv[1]).name
+if not name.endswith(".whl"):
+    raise SystemExit(1)
+stem = name[:-4]
+parts = stem.split("-")
+# PEP 427: distribution-version(-build tag)-python tag-abi tag-platform tag
+if len(parts) < 5:
+    raise SystemExit(1)
+PY
+}
+
+python_satisfies_runtime() {
+  local python_bin="$1"
+  [[ -x "${python_bin}" ]] || return 1
+  PYTHONDONTWRITEBYTECODE=1 "${python_bin}" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1
+}
+
+python_version_string() {
+  local python_bin="$1"
+  PYTHONDONTWRITEBYTECODE=1 "${python_bin}" -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' 2>/dev/null || printf 'unknown'
+}
+
+select_runtime_python() {
+  local home_dir="$1"
+  local candidate
+  local candidates=()
+
+  if [[ "${HATCH_FORCE_RUNTIME_PYTHON_MISSING:-0}" == "1" ]]; then
+    return 1
+  fi
+
+  if [[ -n "${HATCH_RUNTIME_PYTHON:-}" ]]; then
+    candidates+=("${HATCH_RUNTIME_PYTHON}")
+  fi
+  candidates+=("${home_dir}/vendor/python/current/bin/python3")
+  candidates+=("${home_dir}/vendor/python/current/bin/python3.13")
+  candidates+=("${home_dir}/vendor/python/current/bin/python3.12")
+  candidates+=("${home_dir}/vendor/python/current/bin/python3.11")
+
+  if [[ "${HATCH_ALLOW_SYSTEM_RUNTIME_PYTHON:-0}" == "1" ]]; then
+    for candidate in python3.13 python3.12 python3.11 python3; do
+      if have_command "${candidate}"; then
+        candidates+=("$(command -v "${candidate}")")
+      fi
+    done
+  fi
+
+  for candidate in "${candidates[@]}"; do
+    if python_satisfies_runtime "${candidate}"; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+select_bundle_runtime_python() {
+  local candidate
+  local candidates=()
+
+  if [[ "${HATCH_FORCE_RUNTIME_PYTHON_MISSING:-0}" == "1" ]]; then
+    return 1
+  fi
+
+  candidates+=("${HATCH_BUNDLE_ROOT}/vendor/python/current/bin/python3")
+  candidates+=("${HATCH_BUNDLE_ROOT}/vendor/python/current/bin/python3.13")
+  candidates+=("${HATCH_BUNDLE_ROOT}/vendor/python/current/bin/python3.12")
+  candidates+=("${HATCH_BUNDLE_ROOT}/vendor/python/current/bin/python3.11")
+
+  for candidate in "${candidates[@]}"; do
+    if python_satisfies_runtime "${candidate}"; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  return 1
 }
 
 install_runtime_assets() {
@@ -164,7 +429,7 @@ install_runtime_assets() {
     log_warn "Bundle runtime directory missing; manifest may describe an external wheel-only bundle"
   fi
 
-  for asset in python support lm-studio models browser skills launchd; do
+  for asset in python support lm-studio models browser skills launchd wheelhouse; do
     if [[ -d "${HATCH_BUNDLE_ROOT}/vendor/${asset}" ]]; then
       log_action rm -rf "${home_dir}/vendor/${asset}"
       log_action cp -R "${HATCH_BUNDLE_ROOT}/vendor/${asset}" "${home_dir}/vendor/${asset}"
@@ -172,7 +437,237 @@ install_runtime_assets() {
   done
 }
 
-write_lm_studio_defaults() {
+ensure_local_bin_on_path() {
+  local user_home="$1"
+  local command_link_dir="${user_home}/.local/bin"
+  local shell_name
+  local shell_config
+  shell_name="$(basename "${SHELL:-/bin/zsh}")"
+
+  if [[ ":${PATH}:" == *":${command_link_dir}:"* ]]; then
+    log_ok "${command_link_dir} already on PATH"
+    return
+  fi
+
+  case "${shell_name}" in
+    zsh)
+      shell_config="${user_home}/.zshrc"
+      ;;
+    bash)
+      if [[ -f "${user_home}/.bash_profile" ]]; then
+        shell_config="${user_home}/.bash_profile"
+      else
+        shell_config="${user_home}/.bashrc"
+      fi
+      ;;
+    *)
+      shell_config="${user_home}/.zshrc"
+      ;;
+  esac
+
+  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+    printf '  dry-run: append ~/.local/bin PATH export to %s\n' "${shell_config}"
+    return
+  fi
+
+  mkdir -p "$(dirname "${shell_config}")"
+  touch "${shell_config}"
+  if grep -v '^[[:space:]]*#' "${shell_config}" 2>/dev/null | grep -qE 'PATH=.*\.local/bin'; then
+    log_ok "${shell_config} already configures ~/.local/bin"
+    return
+  fi
+
+  {
+    printf '\n'
+    printf '# MonoClaw Runtime - ensure ~/.local/bin is on PATH\n'
+    printf 'export PATH="$HOME/.local/bin:$PATH"\n'
+  } >> "${shell_config}"
+  log_ok "Added ~/.local/bin to PATH in ${shell_config}"
+}
+
+write_monoclaw_shim() {
+  local user_home="$1"
+  local venv_dir="$2"
+  local command_link_dir="${user_home}/.local/bin"
+  local shim="${command_link_dir}/monoclaw"
+
+  log_action mkdir -p "${command_link_dir}"
+  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+    printf '  dry-run: write %s shim\n' "${shim}"
+    log_action chmod +x "${shim}"
+    ensure_local_bin_on_path "${user_home}"
+    return
+  fi
+
+  cat > "${shim}" <<EOF
+#!/usr/bin/env bash
+unset PYTHONPATH
+unset PYTHONHOME
+exec "${venv_dir}/bin/monoclaw" "\$@"
+EOF
+  chmod +x "${shim}"
+  log_ok "monoclaw command shim installed at ${shim}"
+  ensure_local_bin_on_path "${user_home}"
+}
+
+create_runtime_venv() {
+  local runtime_python="$1"
+  local venv_dir="$2"
+
+  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+    log_action rm -rf "${venv_dir}"
+    if [[ "${HATCH_TEST_VENV_ENSUREPIP_FAIL:-0}" == "1" ]]; then
+      warn_or_die "Bundled Python failed to create a pip-capable venv; rebuild the bundle with a working Python runtime"
+    else
+      log_action "${runtime_python}" -m venv "${venv_dir}"
+    fi
+    return
+  fi
+
+  rm -rf "${venv_dir}"
+  if "${runtime_python}" -m venv "${venv_dir}"; then
+    return
+  fi
+
+  die "Bundled Python failed to create a pip-capable venv; rebuild the bundle with a working Python runtime"
+}
+
+bootstrap_runtime() {
+  local home_dir
+  local runtime_dir
+  local venv_dir
+  local wheel
+  local wheel_to_check
+  local wheel_rel
+  local wheelhouse
+  local pip_wheel
+  local package_spec
+  local runtime_version
+  local fallback_version
+  local runtime_python
+  local pip_install_base
+  home_dir="$(monoclaw_home)"
+  runtime_dir="${home_dir}/vendor/runtime"
+  venv_dir="${runtime_dir}/venv"
+  wheel_rel="$(runtime_manifest_field wheel)"
+  runtime_version="$(runtime_manifest_field version)"
+  if [[ -z "${wheel_rel}" ]]; then
+    wheel_rel="runtime/monoclaw-runtime.whl"
+  fi
+  if [[ -z "${runtime_version}" ]]; then
+    runtime_version="0.0.0"
+  fi
+  wheel="${home_dir}/vendor/${wheel_rel}"
+  wheel_to_check="${wheel}"
+  wheelhouse="${home_dir}/vendor/wheelhouse"
+  pip_wheel="${wheel}"
+
+  log_step "install" "Bootstrapping MonoClaw runtime"
+
+  if [[ "${HATCH_SKIP_RUNTIME_BOOTSTRAP:-0}" == "1" ]]; then
+    log_warn "Skipping runtime bootstrap because HATCH_SKIP_RUNTIME_BOOTSTRAP=1"
+    return
+  fi
+
+  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+    wheel_to_check="${HATCH_BUNDLE_ROOT}/${wheel_rel}"
+  fi
+
+  if [[ ! -f "${wheel_to_check}" ]]; then
+    warn_or_die "Runtime wheel missing at ${wheel}"
+    return
+  fi
+
+  if ! runtime_python="$(select_runtime_python "${home_dir}")"; then
+    warn_or_die "Python 3.11+ is required for MonoClaw runtime bootstrap; bundle vendor/python/current/bin/python3 or install Python 3.11+ before rerunning"
+    return
+  fi
+
+  log_ok "Using Python ${runtime_python} ($(python_version_string "${runtime_python}")) for runtime bootstrap"
+
+  if ! is_valid_wheel_filename "${wheel_to_check}"; then
+    fallback_version="${runtime_version//-/_}"
+    pip_wheel="${runtime_dir}/.hatch-install/monoclaw_runtime-${fallback_version}-py3-none-any.whl"
+  fi
+  package_spec="${pip_wheel}[local-office]"
+
+  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+    create_runtime_venv "${runtime_python}" "${venv_dir}"
+    if [[ "${pip_wheel}" != "${wheel}" ]]; then
+      log_action mkdir -p "$(dirname "${pip_wheel}")"
+      log_action cp "${wheel}" "${pip_wheel}"
+    fi
+    if [[ -d "${HATCH_BUNDLE_ROOT}/vendor/wheelhouse" ]]; then
+      pip_install_base=("${venv_dir}/bin/python" -m pip install --no-index --find-links "${wheelhouse}")
+      log_action "${pip_install_base[@]}" --upgrade pip setuptools wheel
+      log_action "${pip_install_base[@]}" "${package_spec}"
+    elif [[ "${HATCH_ALLOW_RUNTIME_NETWORK_FALLBACK:-0}" == "1" ]]; then
+      log_warn "No bundled wheelhouse found; resolving local-office dependencies from the network because HATCH_ALLOW_RUNTIME_NETWORK_FALLBACK=1"
+      log_action "${venv_dir}/bin/python" -m pip install --upgrade pip setuptools wheel
+      log_action "${venv_dir}/bin/python" -m pip install "${package_spec}"
+    else
+      warn_or_die "Bundled wheelhouse is required for production runtime bootstrap"
+    fi
+    write_monoclaw_shim "${HOME}" "${venv_dir}"
+    return
+  fi
+
+  create_runtime_venv "${runtime_python}" "${venv_dir}"
+  if [[ "${pip_wheel}" != "${wheel}" ]]; then
+    mkdir -p "$(dirname "${pip_wheel}")"
+    cp "${wheel}" "${pip_wheel}"
+  fi
+  if [[ -d "${wheelhouse}" ]] && [[ -n "$(ls -A "${wheelhouse}" 2>/dev/null || true)" ]]; then
+    "${venv_dir}/bin/python" -m pip install --no-index --find-links "${wheelhouse}" --upgrade pip setuptools wheel
+    "${venv_dir}/bin/python" -m pip install --no-index --find-links "${wheelhouse}" "${package_spec}"
+  elif [[ "${HATCH_ALLOW_RUNTIME_NETWORK_FALLBACK:-0}" == "1" ]]; then
+    log_warn "No bundled wheelhouse found; resolving local-office dependencies from the network because HATCH_ALLOW_RUNTIME_NETWORK_FALLBACK=1"
+    "${venv_dir}/bin/python" -m pip install --upgrade pip setuptools wheel
+    "${venv_dir}/bin/python" -m pip install "${package_spec}"
+  else
+    die "Bundled wheelhouse is required for production runtime bootstrap"
+  fi
+  log_ok "MonoClaw runtime installed into ${venv_dir}"
+  write_monoclaw_shim "${HOME}" "${venv_dir}"
+}
+
+install_bundled_skills() {
+  local home_dir
+  local source_dir
+  local target_dir
+  home_dir="$(monoclaw_home)"
+  source_dir="${home_dir}/vendor/skills"
+  target_dir="${home_dir}/skills"
+  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+    source_dir="${HATCH_BUNDLE_ROOT}/vendor/skills"
+  fi
+
+  if [[ ! -d "${source_dir}" ]]; then
+    log_warn "No bundled skills staged at ${home_dir}/vendor/skills"
+    return
+  fi
+
+  log_step "install" "Installing bundled skills"
+  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+    printf '  dry-run: install bundled skills into %s\n' "${target_dir}"
+    return
+  fi
+
+  mkdir -p "${target_dir}"
+  for skill_path in "${source_dir}"/*; do
+    [[ -e "${skill_path}" ]] || continue
+    local skill_name
+    skill_name="$(basename "${skill_path}")"
+    if [[ -e "${target_dir}/${skill_name}" ]]; then
+      log_warn "Keeping existing skill ${target_dir}/${skill_name}"
+      continue
+    fi
+    cp -R "${skill_path}" "${target_dir}/${skill_name}"
+  done
+  log_ok "Bundled skills installed into ${target_dir}"
+}
+
+write_setup_config_handoff() {
   local home_dir
   home_dir="$(monoclaw_home)"
 
@@ -180,48 +675,66 @@ write_lm_studio_defaults() {
     if [[ -f "${home_dir}/.env" ]]; then
       printf '  dry-run: keep existing %s\n' "${home_dir}/.env"
     else
-      printf '  dry-run: write %s with LM Studio defaults\n' "${home_dir}/.env"
+      printf '  dry-run: leave %s for monoclaw setup\n' "${home_dir}/.env"
     fi
     if [[ -f "${home_dir}/config.yaml" ]]; then
       printf '  dry-run: keep existing %s\n' "${home_dir}/config.yaml"
     else
-      printf '  dry-run: write %s with LM Studio defaults\n' "${home_dir}/config.yaml"
+      printf '  dry-run: leave %s for monoclaw setup\n' "${home_dir}/config.yaml"
     fi
     return
   fi
 
   if [[ -f "${home_dir}/.env" ]]; then
-    log_warn "Keeping existing ${home_dir}/.env; LM Studio defaults were not overwritten"
+    log_warn "Keeping existing ${home_dir}/.env"
   else
-    cat > "${home_dir}/.env" <<'ENV'
-MONOCLAW_MODEL=local:gemma4:e4b
-OPENAI_BASE_URL=http://127.0.0.1:1234/v1
-OPENAI_API_KEY=lm-studio
-ENV
-    chmod 600 "${home_dir}/.env"
+    log_warn "No ${home_dir}/.env written; run monoclaw setup for provider and secret configuration"
   fi
 
   if [[ -f "${home_dir}/config.yaml" ]]; then
-    log_warn "Keeping existing ${home_dir}/config.yaml; LM Studio defaults were not overwritten"
+    log_warn "Keeping existing ${home_dir}/config.yaml"
   else
-    cat > "${home_dir}/config.yaml" <<'YAML'
-model:
-  provider: custom
-  model: local:gemma4:e4b
-  base_url: http://127.0.0.1:1234/v1
-  api_key: lm-studio
-YAML
+    log_warn "No ${home_dir}/config.yaml written; run monoclaw setup for runtime configuration"
+  fi
+}
+
+print_manual_local_inference_handoff() {
+  log_step "install" "Manual local inference handoff"
+  printf '  manual: install LM Studio from the official .dmg if local inference is required\n'
+  printf '  manual: install Docker Desktop from the official .dmg if sandboxed tools are required\n'
+  printf '  manual: use ./install-gemma-model.sh when the optional Gemma model pack is present on the pendrive\n'
+  printf '  manual: launch LM Studio once and import the staged GGUF from ~/.monoclaw/vendor/models/gemma-4-e4b/gemma-4-e4b.gguf\n'
+}
+
+print_technician_handoff() {
+  log_step "install" "Technician handoff"
+  printf '  next: open a new terminal or run: export PATH="%s/.local/bin:$PATH"\n' "${HOME}"
+  printf '  next: verify runtime with: monoclaw --version\n'
+  printf '  next: run monoclaw setup\n'
+
+  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+    printf '  dry-run: offer to run monoclaw setup when a TTY is available\n'
+  elif [[ -t 0 && -t 1 ]]; then
+    printf '  info: setup wizard not started automatically; run monoclaw setup after install\n'
+  else
+    printf '  info: no interactive TTY detected; run monoclaw setup manually after install\n'
   fi
 }
 
 run_install() {
-  run_preflight
-  verify_bundle_manifest "${HATCH_BUNDLE_ROOT}" >/dev/null
+  run_prepare_bundle
+  log_step "system" "macOS $(macos_version), architecture $(machine_arch)"
+  check_manual_prerequisites
+  check_terminal_dependencies
   cleanup_existing_runtime
   install_runtime_assets
-  write_lm_studio_defaults
+  write_setup_config_handoff
+  bootstrap_runtime
+  install_bundled_skills
+  print_manual_local_inference_handoff
+  print_technician_handoff
   log_step "install" "Service bootstrap scaffold"
-  log_warn "launchd service installation and local agent smoke checks are not enabled until bundle plists are finalized"
+  log_warn "launchd service installation is not enabled until bundle plists are finalized"
 }
 
 run_verify() {
@@ -241,30 +754,28 @@ run_verify() {
     log_warn "vendor runtime assets are missing"
   fi
 
+  if [[ -x "${home_dir}/vendor/runtime/venv/bin/monoclaw" ]]; then
+    log_ok "monoclaw venv entrypoint present"
+  else
+    log_warn "monoclaw venv entrypoint is missing"
+  fi
+
+  if [[ -x "${HOME}/.local/bin/monoclaw" ]]; then
+    log_ok "monoclaw command shim present"
+  else
+    log_warn "monoclaw command shim is missing"
+  fi
+
   if [[ -f "${home_dir}/vendor/hatch-manifest.json" ]]; then
     log_ok "installed Hatch manifest present"
   else
     log_warn "installed Hatch manifest is missing"
   fi
 
-  if [[ -d "${home_dir}/vendor/lm-studio" ]]; then
-    log_ok "LM Studio bundle present"
+  if [[ -d "${home_dir}/skills" ]] && [[ -n "$(ls -A "${home_dir}/skills" 2>/dev/null || true)" ]]; then
+    log_ok "bundled skills installed"
   else
-    log_warn "LM Studio bundle is missing"
-  fi
-
-  if [[ -f "${home_dir}/vendor/models/gemma-4-e4b/gemma-4-e4b.gguf" ]]; then
-    log_ok "Gemma 4 E4B model present"
-  else
-    log_warn "Gemma 4 E4B model is missing"
-  fi
-
-  if [[ -f "${home_dir}/.env" ]] \
-    && grep -q "OPENAI_BASE_URL=http://127.0.0.1:1234/v1" "${home_dir}/.env" \
-    && grep -q "MONOCLAW_MODEL=local:gemma4:e4b" "${home_dir}/.env"; then
-    log_ok "LM Studio runtime defaults present"
-  else
-    log_warn "LM Studio runtime defaults are missing"
+    log_warn "bundled skills are missing"
   fi
 
   if [[ -d "${home_dir}/logs" && -w "${home_dir}/logs" ]]; then
@@ -274,9 +785,95 @@ run_verify() {
   fi
 }
 
+run_verify_local_inference() {
+  local home_dir
+  home_dir="$(monoclaw_home)"
+
+  log_step "verify" "Checking optional local inference readiness"
+  if [[ -d "/Applications/LM Studio.app" ]]; then
+    log_ok "LM Studio app present in /Applications"
+  else
+    log_warn "LM Studio app is missing from /Applications"
+  fi
+
+  if [[ -f "${home_dir}/vendor/models/gemma-4-e4b/gemma-4-e4b.gguf" ]]; then
+    log_ok "Gemma 4 E4B model present"
+  else
+    log_warn "Gemma 4 E4B model is missing"
+  fi
+
+  if [[ -f "${home_dir}/.env" ]] \
+    && grep -q "LM_BASE_URL=http://127.0.0.1:1234/v1" "${home_dir}/.env" \
+    && grep -q "LM_API_KEY=dummy-lm-api-key" "${home_dir}/.env" \
+    && grep -q "MONOCLAW_MODEL=local:gemma4:e4b" "${home_dir}/.env" \
+    && [[ -f "${home_dir}/config.yaml" ]] \
+    && grep -q "provider: lmstudio" "${home_dir}/config.yaml"; then
+    log_ok "LM Studio runtime defaults present"
+  else
+    log_warn "LM Studio runtime defaults are missing; run monoclaw setup to select the provider"
+  fi
+}
+
+model_pack_manifest_field() {
+  local field="$1"
+  local python_bin
+  python_bin="$(hatch_manifest_python "${HATCH_BUNDLE_ROOT}")"
+  PYTHONDONTWRITEBYTECODE=1 HATCH_MODEL_PACK_ROOT="${HATCH_MODEL_PACK_ROOT}" "${python_bin}" - "${field}" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+field = sys.argv[1]
+manifest = Path(os.environ["HATCH_MODEL_PACK_ROOT"]) / "model-pack-manifest.json"
+data = json.loads(manifest.read_text(encoding="utf-8"))
+model = data.get("model", {})
+value = model.get(field, "")
+if value:
+    print(value)
+PY
+}
+
+run_verify_model_pack() {
+  log_step "model-pack" "Checking optional Gemma model pack"
+  verify_model_pack_manifest "${HATCH_MODEL_PACK_ROOT}" | sed 's/^/  ok: /'
+}
+
+run_install_model() {
+  local home_dir
+  local model_rel
+  local model_name
+  local source_path
+  local target_dir
+  local target_path
+  local tmp_path
+  home_dir="$(monoclaw_home)"
+
+  run_verify_model_pack
+  model_rel="$(model_pack_manifest_field path)"
+  model_name="$(basename "${model_rel}")"
+  source_path="${HATCH_MODEL_PACK_ROOT}/${model_rel}"
+  target_dir="${home_dir}/vendor/models/gemma-4-e4b"
+  target_path="${target_dir}/${model_name}"
+  tmp_path="${target_dir}/.${model_name}.tmp"
+
+  log_step "model-pack" "Installing optional Gemma 4 E4B model"
+  log_warn "LM Studio may copy this GGUF again during manual import; make sure the target Mac has enough free disk space"
+  log_action mkdir -p "${target_dir}"
+  log_action cp "${source_path}" "${tmp_path}"
+  log_action mv "${tmp_path}" "${target_path}"
+  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+    printf '  dry-run: Gemma 4 E4B model staged at %s\n' "${target_path}"
+  else
+    log_ok "Gemma 4 E4B model staged at ${target_path}"
+  fi
+  printf '  manual: import %s from LM Studio after first launch\n' "${target_path}"
+}
+
 run_doctor() {
   run_preflight
   run_verify
+  run_verify_local_inference
   log_step "doctor" "Hatch doctor complete"
 }
 
@@ -295,6 +892,15 @@ case "${COMMAND}" in
     ;;
   verify)
     run_verify
+    ;;
+  verify-local-inference)
+    run_verify_local_inference
+    ;;
+  verify-model-pack)
+    run_verify_model_pack
+    ;;
+  install-model)
+    run_install_model
     ;;
   doctor)
     run_doctor

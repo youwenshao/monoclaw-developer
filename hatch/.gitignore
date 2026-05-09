@@ -1,5 +1,6 @@
 /dist/
 /bundle-inputs/
+/model-packs/
 /provisioning-logs/
 /*.tar
 /*.tar.gz
