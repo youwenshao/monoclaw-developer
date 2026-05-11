@@ -78,6 +78,34 @@ def collect_models(root: Path) -> list[dict[str, object]]:
     ]
 
 
+def collect_provisioning_summary(root: Path) -> dict[str, object]:
+    lock = root / "vendor" / "provisioning" / "monoclaw-provisioning-lock.json"
+    summary: dict[str, object] = {
+        "lock": lock.relative_to(root).as_posix() if lock.is_file() else "",
+        "provisioned_tools": 0,
+        "provisioned_skills": 0,
+        "user_config_required": 0,
+    }
+    if not lock.is_file():
+        return summary
+    try:
+        data = json.loads(lock.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return summary
+    for item in data.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        classification = item.get("classification")
+        if classification == "stock_bundle_candidate":
+            if item.get("kind") == "skill":
+                summary["provisioned_skills"] = int(summary["provisioned_skills"]) + 1
+            elif item.get("kind") == "tool":
+                summary["provisioned_tools"] = int(summary["provisioned_tools"]) + 1
+        elif classification == "provisioned_user_config_required":
+            summary["user_config_required"] = int(summary["user_config_required"]) + 1
+    return summary
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bundle-root", required=True)
@@ -95,6 +123,7 @@ def main() -> None:
     wheel = find_runtime_wheel(root)
     models = collect_models(root)
     has_local_model = bool(models)
+    provisioning = collect_provisioning_summary(root)
 
     if not wheel.is_file():
         raise SystemExit(f"runtime wheel missing: {wheel}")
@@ -122,6 +151,10 @@ def main() -> None:
             "browser_automation": (root / "vendor" / "browser").is_dir(),
             "sandbox_worker": (root / "vendor" / "support").is_dir(),
             "voice": False,
+            "provisioning_audit": bool(provisioning["lock"]),
+            "provisioned_tools": provisioning["provisioned_tools"],
+            "provisioned_skills": provisioning["provisioned_skills"],
+            "user_config_required_integrations": provisioning["user_config_required"],
         },
         "models": models,
         "artifacts": collect_artifacts(root),

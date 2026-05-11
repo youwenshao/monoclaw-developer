@@ -1,0 +1,4 @@
+name: mona-secretary-tools
+version: 0.1.0
+description: Optional wrappers for Hatch-bundled Mona secretary tools.
+kind: general

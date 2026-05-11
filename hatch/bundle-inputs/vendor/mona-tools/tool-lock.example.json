@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "pack": {
+    "id": "mona-secretary-tools",
+    "version": "0.1.0"
+  },
+  "node": {
+    "version": "26.0.0",
+    "source": "vendor/mona-tools/prebuilt/node/current"
+  },
+  "tools": [
+    {
+      "name": "wacrawl",
+      "version": "0.2.0",
+      "license": "MIT",
+      "repository": "https://github.com/steipete/wacrawl",
+      "source_ref": "replace-with-commit-or-release",
+      "mode": "go-binary",
+      "source": "vendor/mona-tools/prebuilt/bin/wacrawl",
+      "path": "bin/wacrawl",
+      "activation": "default",
+      "required_permissions": ["full-disk-access"]
+    },
+    {
+      "name": "slacrawl",
+      "version": "0.5.0",
+      "license": "MIT",
+      "repository": "https://github.com/vincentkoc/slacrawl",
+      "source_ref": "replace-with-commit-or-release",
+      "mode": "go-binary",
+      "source": "vendor/mona-tools/prebuilt/bin/slacrawl",
+      "path": "bin/slacrawl",
+      "activation": "default",
+      "required_permissions": ["full-disk-access", "network"]
+    },
+    {
+      "name": "summarize",
+      "version": "0.14.1",
+      "license": "MIT",
+      "repository": "https://github.com/steipete/summarize",
+      "source_ref": "replace-with-commit-or-release",
+      "mode": "node-app",
+      "source": "vendor/mona-tools/prebuilt/node/apps/summarize",
+      "path": "node/apps/summarize/dist/cli.js",
+      "activation": "default",
+      "required_permissions": ["network"]
+    },
+    {
+      "name": "macos-automator-mcp",
+      "version": "0.4.1",
+      "license": "MIT",
+      "repository": "https://github.com/steipete/macos-automator-mcp",
+      "source_ref": "replace-with-commit-or-release",
+      "mode": "node-app",
+      "source": "vendor/mona-tools/prebuilt/node/apps/macos-automator-mcp",
+      "path": "node/apps/macos-automator-mcp/dist/server.js",
+      "activation": "opt-in",
+      "required_permissions": ["automation", "accessibility"]
+    },
+    {
+      "name": "conduit-mcp",
+      "version": "1.0.0",
+      "license": "MIT",
+      "repository": "https://github.com/steipete/conduit-mcp",
+      "source_ref": "replace-with-commit-or-release",
+      "mode": "node-app",
+      "source": "vendor/mona-tools/prebuilt/node/apps/conduit-mcp",
+      "path": "node/apps/conduit-mcp/dist/src/mcp-server.js",
+      "activation": "optional",
+      "required_permissions": ["filesystem", "network"]
+    },
+    {
+      "name": "ghcrawl",
+      "version": "0.0.0",
+      "license": "MIT",
+      "repository": "https://github.com/steipete/ghcrawl",
+      "source_ref": "replace-with-commit-or-release",
+      "mode": "node-app",
+      "source": "vendor/mona-tools/prebuilt/node/apps/ghcrawl",
+      "path": "node/apps/ghcrawl/apps/cli/bin/ghcrawl.js",
+      "activation": "optional",
+      "required_permissions": ["network"]
+    },
+    {
+      "name": "vox",
+      "version": "0.1.0",
+      "license": "MIT",
+      "repository": "https://github.com/steipete/vox",
+      "source_ref": "replace-with-commit-or-release",
+      "mode": "deferred",
+      "activation": "deferred",
+      "required_permissions": ["network", "telecom-consent"]
+    },
+    {
+      "name": "brabble",
+      "version": "0.1.0",
+      "license": "MIT",
+      "repository": "https://github.com/steipete/brabble",
+      "source_ref": "replace-with-commit-or-release",
+      "mode": "deferred",
+      "activation": "deferred",
+      "required_permissions": ["microphone", "launchd"]
+    },
+    {
+      "name": "sweetlink",
+      "version": "0.2.0",
+      "license": "MIT",
+      "repository": "https://github.com/steipete/sweetlink",
+      "source_ref": "replace-with-commit-or-release",
+      "mode": "deferred",
+      "activation": "deferred",
+      "required_permissions": ["browser", "local-ca"]
+    },
+    {
+      "name": "birdclaw",
+      "version": "0.4.0",
+      "license": "MIT",
+      "repository": "https://github.com/steipete/birdclaw",
+      "source_ref": "replace-with-commit-or-release",
+      "mode": "deferred",
+      "activation": "deferred",
+      "required_permissions": ["network", "social-account"]
+    }
+  ],
+  "extra_artifacts": [
+    {
+      "source": "vendor/mona-tools/templates/docs",
+      "path": "docs"
+    },
+    {
+      "source": "vendor/mona-tools/templates/config",
+      "path": "config"
+    },
+    {
+      "source": "vendor/mona-tools/templates/plugins",
+      "path": "plugins"
+    },
+    {
+      "source": "vendor/mona-tools/templates/skills",
+      "path": "skills"
+    }
+  ]
+}

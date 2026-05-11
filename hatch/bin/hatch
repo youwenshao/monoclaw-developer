@@ -10,6 +10,7 @@ HATCH_DRY_RUN=true
 COMMAND="preflight"
 HATCH_BUNDLE_ROOT="${HATCH_ROOT}/dist"
 HATCH_MODEL_PACK_ROOT=""
+HATCH_TOOLS_PACK_ROOT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -29,7 +30,11 @@ while [[ $# -gt 0 ]]; do
       HATCH_MODEL_PACK_ROOT="$(cd "$2" && pwd)"
       shift 2
       ;;
-    prepare-bundle|preflight|cleanup-existing|install|verify|doctor|verify-local-inference|verify-model-pack|install-model)
+    --tools-pack-root)
+      HATCH_TOOLS_PACK_ROOT="$(cd "$2" && pwd)"
+      shift 2
+      ;;
+    prepare-bundle|preflight|cleanup-existing|install|verify|doctor|verify-local-inference|verify-model-pack|install-model|verify-tools-pack|install-tools)
       COMMAND="$1"
       shift
       ;;
@@ -43,6 +48,7 @@ Usage:
   hatch/bin/hatch [--dry-run|--apply] cleanup-existing
   hatch/bin/hatch [--dry-run|--apply] [--bundle-root dist] install
   hatch/bin/hatch [--dry-run|--apply] [--bundle-root dist] [--model-pack-root model-packs/gemma-4-e4b] install-model
+  hatch/bin/hatch [--dry-run|--apply] [--bundle-root dist] [--tools-pack-root tool-packs/mona-secretary-tools] install-tools
   hatch/bin/hatch [--dry-run|--apply] verify
   hatch/bin/hatch [--dry-run|--apply] verify-local-inference
   hatch/bin/hatch [--dry-run|--apply] doctor
@@ -60,6 +66,9 @@ done
 
 if [[ -z "${HATCH_MODEL_PACK_ROOT}" ]]; then
   HATCH_MODEL_PACK_ROOT="$(cd "${HATCH_BUNDLE_ROOT}/.." && pwd)/model-packs/gemma-4-e4b"
+fi
+if [[ -z "${HATCH_TOOLS_PACK_ROOT}" ]]; then
+  HATCH_TOOLS_PACK_ROOT="$(cd "${HATCH_BUNDLE_ROOT}/.." && pwd)/tool-packs/mona-secretary-tools"
 fi
 
 macos_version() {
@@ -429,7 +438,7 @@ install_runtime_assets() {
     log_warn "Bundle runtime directory missing; manifest may describe an external wheel-only bundle"
   fi
 
-  for asset in python support lm-studio models browser skills launchd wheelhouse; do
+  for asset in python support lm-studio models browser skills launchd wheelhouse provisioning; do
     if [[ -d "${HATCH_BUNDLE_ROOT}/vendor/${asset}" ]]; then
       log_action rm -rf "${home_dir}/vendor/${asset}"
       log_action cp -R "${HATCH_BUNDLE_ROOT}/vendor/${asset}" "${home_dir}/vendor/${asset}"
@@ -870,6 +879,89 @@ run_install_model() {
   printf '  manual: import %s from LM Studio after first launch\n' "${target_path}"
 }
 
+run_verify_tools_pack() {
+  log_step "tools-pack" "Checking optional Mona secretary tools pack"
+  verify_tools_pack_manifest "${HATCH_TOOLS_PACK_ROOT}" | sed 's/^/  ok: /'
+}
+
+install_tools_pack_skills() {
+  local source_dir="$1"
+  local target_dir="$2"
+
+  if [[ ! -d "${source_dir}" ]]; then
+    log_warn "No Mona secretary skills staged at ${source_dir}"
+    return
+  fi
+
+  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+    printf '  dry-run: install Mona secretary skills into %s\n' "${target_dir}"
+    return
+  fi
+
+  mkdir -p "${target_dir}"
+  for skill_path in "${source_dir}"/*; do
+    [[ -e "${skill_path}" ]] || continue
+    local skill_name
+    skill_name="$(basename "${skill_path}")"
+    if [[ -e "${target_dir}/${skill_name}" ]]; then
+      log_warn "Keeping existing skill ${target_dir}/${skill_name}"
+      continue
+    fi
+    cp -R "${skill_path}" "${target_dir}/${skill_name}"
+  done
+  log_ok "Mona secretary skills installed into ${target_dir}"
+}
+
+install_tools_pack_plugins() {
+  local source_dir="$1"
+  local target_dir="$2"
+
+  if [[ ! -d "${source_dir}" ]]; then
+    log_warn "No Mona secretary plugins staged at ${source_dir}"
+    return
+  fi
+
+  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+    printf '  dry-run: install Mona secretary plugins into %s\n' "${target_dir}"
+    return
+  fi
+
+  mkdir -p "${target_dir}"
+  for plugin_path in "${source_dir}"/*; do
+    [[ -e "${plugin_path}" ]] || continue
+    local plugin_name
+    plugin_name="$(basename "${plugin_path}")"
+    if [[ -e "${target_dir}/${plugin_name}" ]]; then
+      log_warn "Keeping existing plugin ${target_dir}/${plugin_name}"
+      continue
+    fi
+    cp -R "${plugin_path}" "${target_dir}/${plugin_name}"
+  done
+  log_ok "Mona secretary plugins installed into ${target_dir}"
+}
+
+run_install_tools() {
+  local home_dir
+  local target_dir
+  home_dir="$(monoclaw_home)"
+  target_dir="${home_dir}/vendor/mona-tools"
+
+  run_verify_tools_pack
+  log_step "tools-pack" "Installing optional Mona secretary tools"
+  log_action rm -rf "${target_dir}"
+  log_action mkdir -p "${home_dir}/vendor"
+  log_action cp -R "${HATCH_TOOLS_PACK_ROOT}" "${target_dir}"
+  install_tools_pack_skills "${HATCH_TOOLS_PACK_ROOT}/skills" "${home_dir}/skills"
+  install_tools_pack_plugins "${HATCH_TOOLS_PACK_ROOT}/plugins" "${home_dir}/plugins"
+  printf '  manual: review %s before enabling host automation tools\n' "${target_dir}/docs/permissions.md"
+  printf '  manual: copy MCP examples from %s only after reviewing path and permission scopes\n' "${target_dir}/config"
+  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+    printf '  dry-run: Mona secretary tools installed at %s\n' "${target_dir}"
+  else
+    log_ok "Mona secretary tools installed at ${target_dir}"
+  fi
+}
+
 run_doctor() {
   run_preflight
   run_verify
@@ -901,6 +993,12 @@ case "${COMMAND}" in
     ;;
   install-model)
     run_install_model
+    ;;
+  verify-tools-pack)
+    run_verify_tools_pack
+    ;;
+  install-tools)
+    run_install_tools
     ;;
   doctor)
     run_doctor

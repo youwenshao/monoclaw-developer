@@ -76,6 +76,7 @@ verify_bundle_manifest() {
 import hashlib
 import json
 import os
+import subprocess
 from pathlib import Path
 
 root = Path(os.environ["HATCH_BUNDLE_ROOT"]).resolve()
@@ -207,6 +208,7 @@ verify_model_pack_manifest() {
 import hashlib
 import json
 import os
+import subprocess
 from pathlib import Path
 
 root = Path(os.environ["HATCH_MODEL_PACK_ROOT"]).resolve()
@@ -287,5 +289,147 @@ for path in root.rglob("*"):
         raise SystemExit(f"model pack file is not listed in manifest artifacts: {rel}")
 
 print(f"Model pack verified for {model['id']} ({model_path.stat().st_size} bytes)")
+PY
+}
+
+verify_tools_pack_manifest() {
+  local pack_root="${1:-}"
+  local manifest="${pack_root}/tools-pack-manifest.json"
+  local python_bin
+
+  [[ -n "${pack_root}" ]] || die "tools pack root is empty"
+  [[ -f "${manifest}" ]] || die "tools pack manifest not found at ${manifest}"
+  python_bin="$(hatch_manifest_python "${HATCH_BUNDLE_ROOT:-}")" || die "Python is required to verify the tools pack manifest"
+
+  PYTHONDONTWRITEBYTECODE=1 HATCH_TOOLS_PACK_ROOT="${pack_root}" HATCH_HOST_ARCH="$(uname -m)" "${python_bin}" <<'PY'
+import hashlib
+import json
+import os
+import subprocess
+from pathlib import Path
+
+root = Path(os.environ["HATCH_TOOLS_PACK_ROOT"]).resolve()
+host_arch = os.environ.get("HATCH_HOST_ARCH", "")
+manifest_path = root / "tools-pack-manifest.json"
+data = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+required = ["schema_version", "pack", "target", "runtime", "tools", "artifacts"]
+missing = [key for key in required if key not in data]
+if missing:
+    raise SystemExit(f"tools pack manifest missing required fields: {', '.join(missing)}")
+
+pack = data["pack"]
+pack_missing = [
+    key for key in ("id", "version")
+    if key not in pack or pack[key] in (None, "", [])
+]
+if pack_missing:
+    raise SystemExit(f"tools pack manifest missing pack fields: {', '.join(pack_missing)}")
+if pack.get("id") != "mona-secretary-tools":
+    raise SystemExit("tools pack pack.id must be mona-secretary-tools")
+
+target = data["target"]
+if target.get("platform") != "darwin":
+    raise SystemExit("tools pack target.platform must be darwin")
+if target.get("arch") and target["arch"] != host_arch:
+    raise SystemExit(f"tools pack target.arch {target['arch']} does not match host {host_arch}")
+
+runtime = data["runtime"]
+node_runtime = runtime.get("node")
+if not isinstance(node_runtime, dict):
+    raise SystemExit("tools pack runtime.node must be an object")
+if not node_runtime.get("version"):
+    raise SystemExit("tools pack runtime.node.version is required")
+
+def safe_path(relative: str) -> Path:
+    if not isinstance(relative, str) or not relative:
+        raise SystemExit("tools pack paths must be non-empty strings")
+    candidate = (root / relative).resolve()
+    if candidate != root and root not in candidate.parents:
+        raise SystemExit(f"tools pack path escapes pack root: {relative}")
+    return candidate
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+def is_ignored_metadata(path: Path) -> bool:
+    rel = path.relative_to(root)
+    parts = rel.parts
+    return (
+        path.name == ".DS_Store"
+        or path.name.startswith("._")
+        or any(part in {"__MACOSX", ".Spotlight-V100", ".fseventsd", ".Trashes"} for part in parts)
+    )
+
+for tool in data["tools"]:
+    for key in ("name", "version", "path", "activation", "required_permissions"):
+        if key not in tool:
+            raise SystemExit(f"tools pack tool missing field {key}")
+    tool_path = safe_path(tool["path"])
+    if not tool_path.is_file():
+        raise SystemExit(f"tools pack tool file missing: {tool['path']}")
+
+node_path = node_runtime.get("path", "")
+if node_path:
+    node = safe_path(node_path)
+    if not node.is_file():
+        raise SystemExit(f"tools pack node runtime missing: {node_path}")
+    if not os.access(node, os.X_OK):
+        raise SystemExit(f"tools pack node runtime is not executable: {node_path}")
+    expected_version = node_runtime.get("version", "")
+    try:
+        actual_version = subprocess.check_output([str(node), "--version"], text=True, timeout=10).strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise SystemExit(f"tools pack node runtime smoke failed: {exc}") from exc
+    if actual_version != f"v{expected_version}":
+        raise SystemExit(f"tools pack node runtime version mismatch: expected v{expected_version}, got {actual_version}")
+
+required_handoff_files = [
+    "docs/permissions.md",
+    "config/mcp_servers.mona.example.yaml",
+    "plugins/mona-secretary-tools/plugin.yaml",
+]
+for relative in required_handoff_files:
+    path = safe_path(relative)
+    if not path.is_file():
+        raise SystemExit(f"tools pack required handoff file missing: {relative}")
+
+listed_files = set()
+for artifact in data["artifacts"]:
+    rel = artifact.get("path")
+    kind = artifact.get("kind")
+    path = safe_path(rel)
+    if kind != "file":
+        raise SystemExit(f"tools pack artifact kind must be file: {rel}")
+    if not path.is_file():
+        raise SystemExit(f"tools pack file missing: {rel}")
+    listed_files.add(rel)
+    expected_bytes = artifact.get("bytes")
+    if expected_bytes is None:
+        raise SystemExit(f"tools pack file missing byte size: {rel}")
+    if path.stat().st_size != int(expected_bytes):
+        raise SystemExit(f"tools pack file byte size mismatch: {rel}")
+    expected_sha = artifact.get("sha256")
+    if not expected_sha:
+        raise SystemExit(f"tools pack file missing sha256: {rel}")
+    if file_sha256(path) != expected_sha:
+        raise SystemExit(f"tools pack file sha256 mismatch: {rel}")
+
+for path in root.rglob("*"):
+    if not path.is_file():
+        continue
+    if is_ignored_metadata(path):
+        continue
+    rel = path.relative_to(root).as_posix()
+    if rel == "tools-pack-manifest.json":
+        continue
+    if rel not in listed_files:
+        raise SystemExit(f"tools pack file is not listed in manifest artifacts: {rel}")
+
+print(f"Tools pack verified for {pack['id']} ({len(listed_files)} files)")
 PY
 }

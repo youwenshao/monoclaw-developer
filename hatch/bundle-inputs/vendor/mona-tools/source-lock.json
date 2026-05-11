@@ -1,0 +1,169 @@
+{
+  "schema_version": 1,
+  "pack": {
+    "id": "mona-secretary-tools",
+    "version": "0.1.0"
+  },
+  "node": {
+    "version": "26.0.0",
+    "source_env": "HATCH_MONA_NODE_RUNTIME_SOURCE"
+  },
+  "tools": [
+    {
+      "name": "wacrawl",
+      "version": "0.2.0",
+      "license": "MIT",
+      "repository": "https://github.com/steipete/wacrawl",
+      "ref": "372f3acce0cf0d3d6e2f384ccd715eeec9f332c6",
+      "mode": "go-binary",
+      "activation": "default",
+      "required_permissions": ["full-disk-access"],
+      "build": {
+        "type": "go",
+        "package": "./cmd/wacrawl"
+      }
+    },
+    {
+      "name": "slacrawl",
+      "version": "0.5.0",
+      "license": "MIT",
+      "repository": "https://github.com/vincentkoc/slacrawl",
+      "ref": "2de3a744ac3ff321ed929ede7fd9ca0d01f0a078",
+      "mode": "go-binary",
+      "activation": "default",
+      "required_permissions": ["full-disk-access", "network"],
+      "build": {
+        "type": "go",
+        "package": "./cmd/slacrawl"
+      }
+    },
+    {
+      "name": "summarize",
+      "version": "0.14.1",
+      "license": "MIT",
+      "repository": "https://github.com/steipete/summarize",
+      "ref": "f4a72c2109939eea83c4673d0be1b1599d17f17d",
+      "mode": "node-app",
+      "activation": "default",
+      "required_permissions": ["network"],
+      "entrypoint": "dist/cli.js",
+      "build": {
+        "type": "node",
+        "package_manager": "pnpm",
+        "install": ["pnpm", "install", "--frozen-lockfile"],
+        "build": ["pnpm", "run", "build"]
+      }
+    },
+    {
+      "name": "macos-automator-mcp",
+      "version": "0.4.1",
+      "license": "MIT",
+      "repository": "https://github.com/steipete/macos-automator-mcp",
+      "ref": "6a9ba83d157d9d47639cc621b03488e3b71b7670",
+      "mode": "node-app",
+      "activation": "opt-in",
+      "required_permissions": ["automation", "accessibility"],
+      "entrypoint": "dist/server.js",
+      "build": {
+        "type": "node",
+        "package_manager": "pnpm",
+        "install": ["pnpm", "install", "--frozen-lockfile"],
+        "build": ["pnpm", "run", "build"]
+      }
+    },
+    {
+      "name": "conduit-mcp",
+      "version": "1.0.0",
+      "license": "MIT",
+      "repository": "https://github.com/steipete/conduit-mcp",
+      "ref": "b6aceabb101ca961fe749137c9bd42cc201b5c66",
+      "mode": "node-app",
+      "activation": "optional",
+      "optional": true,
+      "required_permissions": ["filesystem", "network"],
+      "entrypoint": "dist/src/mcp-server.js",
+      "build": {
+        "type": "node",
+        "package_manager": "pnpm",
+        "install": ["pnpm", "install", "--frozen-lockfile"],
+        "build": ["pnpm", "run", "build"]
+      }
+    },
+    {
+      "name": "ghcrawl",
+      "version": "0.8.0",
+      "license": "MIT",
+      "repository": "https://github.com/steipete/ghcrawl",
+      "ref": "4122a5efc27ac495438846a3e1ace3ca35070421",
+      "mode": "node-app",
+      "activation": "optional",
+      "optional": true,
+      "required_permissions": ["network"],
+      "entrypoint": "apps/cli/bin/ghcrawl.js",
+      "build": {
+        "type": "node",
+        "package_manager": "pnpm",
+        "install": ["pnpm", "install", "--frozen-lockfile"],
+        "build": ["pnpm", "run", "build"]
+      }
+    },
+    {
+      "name": "vox",
+      "version": "0.1.0",
+      "license": "MIT",
+      "repository": "https://github.com/steipete/vox",
+      "ref": "938de2fa98f4b1f27629bd727f968916a7074d23",
+      "mode": "deferred",
+      "activation": "deferred",
+      "required_permissions": ["network", "telecom-consent"]
+    },
+    {
+      "name": "brabble",
+      "version": "0.1.0",
+      "license": "MIT",
+      "repository": "https://github.com/steipete/brabble",
+      "ref": "a8800aa9f9c567be750764453d86635eb59a5b58",
+      "mode": "deferred",
+      "activation": "deferred",
+      "required_permissions": ["microphone", "launchd"]
+    },
+    {
+      "name": "sweetlink",
+      "version": "0.2.0",
+      "license": "MIT",
+      "repository": "https://github.com/steipete/sweetlink",
+      "ref": "cf8300dd55cff236d14c36511a55edce8e56c5bb",
+      "mode": "deferred",
+      "activation": "deferred",
+      "required_permissions": ["browser", "local-ca"]
+    },
+    {
+      "name": "birdclaw",
+      "version": "0.4.0",
+      "license": "MIT",
+      "repository": "https://github.com/steipete/birdclaw",
+      "ref": "77df4e3216574b6c866c987098a8aafe96f89582",
+      "mode": "deferred",
+      "activation": "deferred",
+      "required_permissions": ["network", "social-account"]
+    }
+  ],
+  "extra_artifacts": [
+    {
+      "source": "templates/docs",
+      "path": "docs"
+    },
+    {
+      "source": "templates/config",
+      "path": "config"
+    },
+    {
+      "source": "templates/plugins",
+      "path": "plugins"
+    },
+    {
+      "source": "templates/skills",
+      "path": "skills"
+    }
+  ]
+}

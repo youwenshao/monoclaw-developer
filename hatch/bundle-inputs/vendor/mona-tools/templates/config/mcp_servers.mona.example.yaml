@@ -1,0 +1,12 @@
+mcp_servers:
+  macos_automator:
+    command: "~/.monoclaw/vendor/mona-tools/bin/macos-automator-mcp"
+    args: []
+    env:
+      KB_PARSING: "lazy"
+  conduit:
+    command: "~/.monoclaw/vendor/mona-tools/bin/conduit-mcp"
+    args: []
+    env:
+      CONDUIT_ALLOWED_PATHS: "~/Documents:~/Desktop:~/Downloads:/tmp"
+      LOG_LEVEL: "INFO"

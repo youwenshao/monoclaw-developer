@@ -16,6 +16,7 @@ if [[ -z "${HATCH_RUNTIME_ROOT:-}" ]]; then
 fi
 HATCH_DIST_ROOT="${HATCH_DIST_ROOT:-${HATCH_ROOT}/dist}"
 HATCH_MODEL_PACKS_ROOT="${HATCH_MODEL_PACKS_ROOT:-$(cd "$(dirname "${HATCH_DIST_ROOT}")" && pwd)/model-packs}"
+HATCH_TOOLS_PACKS_ROOT="${HATCH_TOOLS_PACKS_ROOT:-$(cd "$(dirname "${HATCH_DIST_ROOT}")" && pwd)/tool-packs}"
 HATCH_TARGET_ARCH="${HATCH_TARGET_ARCH:-$(uname -m)}"
 HATCH_MINIMUM_MACOS="${HATCH_MINIMUM_MACOS:-14.0}"
 
@@ -156,6 +157,46 @@ verify_runtime_wheelhouse() {
   fi
 }
 
+ensure_provisioning_lock() {
+  local lock_path="${HATCH_INPUT_ROOT}/vendor/provisioning/monoclaw-provisioning-lock.json"
+
+  if [[ -f "${lock_path}" ]]; then
+    return 0
+  fi
+
+  if [[ "${HATCH_SKIP_PROVISIONING_LOCK_AUTOGEN:-0}" == "1" ]]; then
+    return 0
+  fi
+
+  local py_bin="python3"
+  if [[ -x "${HATCH_RUNTIME_ROOT}/.venv/bin/python" ]]; then
+    py_bin="${HATCH_RUNTIME_ROOT}/.venv/bin/python"
+  fi
+
+  log "Provisioning lock missing; generating ${lock_path}"
+  mkdir -p "${HATCH_INPUT_ROOT}/vendor/provisioning"
+
+  local gen_home
+  gen_home="$(mktemp -d)"
+  if ! MONOCLAW_HOME="${gen_home}" \
+    PYTHONPATH="${HATCH_RUNTIME_ROOT}" \
+    "${py_bin}" -m monoclaw_cli.provisioning_audit \
+    --promote-unknown-external \
+    --lock-out "${lock_path}"; then
+    rm -rf "${gen_home}"
+    die "failed to generate provisioning lock (install runtime deps or use a venv at ${HATCH_RUNTIME_ROOT}/.venv)"
+  fi
+  rm -rf "${gen_home}"
+
+  log "Auto-generated provisioning lock (review and commit vendor/provisioning/monoclaw-provisioning-lock.json when promoting bundle coverage)"
+}
+
+verify_provisioning_lock() {
+  python3 "${HATCH_ROOT}/scripts/verify_provisioning_lock.py" \
+    --input-root "${HATCH_INPUT_ROOT}" \
+    --runtime-root "${HATCH_RUNTIME_ROOT}"
+}
+
 copy_optional_vendor_asset() {
   local asset="$1"
   if [[ -d "${HATCH_INPUT_ROOT}/vendor/${asset}" ]]; then
@@ -186,6 +227,18 @@ stage_model_packs() {
     --model-file "gemma-4-e4b.gguf"
 }
 
+stage_mona_tools_pack() {
+  if [[ "${HATCH_INCLUDE_MONA_TOOLS:-1}" != "1" ]]; then
+    log "Mona secretary tools pack disabled by HATCH_INCLUDE_MONA_TOOLS=0"
+    return
+  fi
+
+  HATCH_INPUT_ROOT="${HATCH_INPUT_ROOT}" \
+  HATCH_TOOLS_PACKS_ROOT="${HATCH_TOOLS_PACKS_ROOT}" \
+  HATCH_TARGET_ARCH="${HATCH_TARGET_ARCH}" \
+    bash "${HATCH_ROOT}/scripts/build_mona_tools_pack.sh"
+}
+
 stage_runtime_skills() {
   if [[ -d "${HATCH_DIST_ROOT}/vendor/skills" ]]; then
     log "Using curated vendor/skills from bundle inputs"
@@ -205,6 +258,8 @@ stage_bundle() {
   require_file "${HATCH_RUNTIME_ROOT}/pyproject.toml" "runtime pyproject is missing"
   verify_runtime_python_bundle
   verify_runtime_wheelhouse
+  ensure_provisioning_lock
+  verify_provisioning_lock
   validate_dist_root
 
   rm -rf "${HATCH_DIST_ROOT}"
@@ -214,8 +269,9 @@ stage_bundle() {
   cp "${HATCH_ROOT}/lib/common.sh" "${HATCH_DIST_ROOT}/lib/common.sh"
   cp "${HATCH_ROOT}/templates/install.sh" "${HATCH_DIST_ROOT}/install.sh"
   cp "${HATCH_ROOT}/templates/install-gemma-model.sh" "${HATCH_DIST_ROOT}/install-gemma-model.sh"
+  cp "${HATCH_ROOT}/templates/install-mona-tools.sh" "${HATCH_DIST_ROOT}/install-mona-tools.sh"
   cp "${HATCH_ROOT}/tests/hatch_dry_run_tests.sh" "${HATCH_DIST_ROOT}/tests/run-hatch-dry-run.sh"
-  chmod +x "${HATCH_DIST_ROOT}/bin/hatch" "${HATCH_DIST_ROOT}/install.sh" "${HATCH_DIST_ROOT}/install-gemma-model.sh" "${HATCH_DIST_ROOT}/tests/run-hatch-dry-run.sh"
+  chmod +x "${HATCH_DIST_ROOT}/bin/hatch" "${HATCH_DIST_ROOT}/install.sh" "${HATCH_DIST_ROOT}/install-gemma-model.sh" "${HATCH_DIST_ROOT}/install-mona-tools.sh" "${HATCH_DIST_ROOT}/tests/run-hatch-dry-run.sh"
 
   build_runtime_web_assets
   build_runtime_wheel "${HATCH_DIST_ROOT}/runtime"
@@ -237,11 +293,12 @@ EOF
 #   python -m pip install "./monoclaw_runtime-<version>-py3-none-any.whl[local-office]"
 EOF
 
-  for asset in python support browser skills launchd wheelhouse; do
+  for asset in python support browser skills launchd wheelhouse provisioning; do
     copy_optional_vendor_asset "${asset}"
   done
   stage_runtime_skills
   stage_model_packs
+  stage_mona_tools_pack
 
   python3 "${HATCH_ROOT}/scripts/generate_manifest.py" \
     --bundle-root "${HATCH_DIST_ROOT}" \

@@ -14,7 +14,7 @@ mkdir -p "${INPUTS}/vendor/python/current/bin" "${RUNTIME}"
 cat > "${RUNTIME}/pyproject.toml" <<'TOML'
 [project]
 name = "monoclaw-runtime"
-version = "0.13.0"
+version = "0.1.0"
 
 [project.optional-dependencies]
 local-office = ["requests>=2"]
