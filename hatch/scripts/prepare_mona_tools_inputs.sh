@@ -345,7 +345,7 @@ def build_node_tool(tool: dict[str, object], source_root: Path, prebuilt_root: P
 
 
 def lock_common(tool: dict[str, object], source_ref: str) -> dict[str, object]:
-    return {
+    result = {
         "name": tool["name"],
         "version": tool["version"],
         "license": tool["license"],
@@ -355,6 +355,10 @@ def lock_common(tool: dict[str, object], source_ref: str) -> dict[str, object]:
         "activation": tool["activation"],
         "required_permissions": tool["required_permissions"],
     }
+    for key in ("optional", "promotion_gates", "service_recipe"):
+        if key in tool:
+            result[key] = tool[key]
+    return result
 
 
 def deferred_tool(tool: dict[str, object], reason: str | None = None) -> dict[str, object]:

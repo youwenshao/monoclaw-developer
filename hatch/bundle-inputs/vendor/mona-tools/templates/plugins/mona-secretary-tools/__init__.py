@@ -67,22 +67,6 @@ def _available(binary: str) -> bool:
     return path.is_file() and os.access(path, os.X_OK)
 
 
-def _doctor(binary: str, *args: str) -> bool:
-    if not _available(binary):
-        return False
-    try:
-        proc = subprocess.run(
-            [str(_tool(binary)), *args],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=20,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return proc.returncode == 0
-
-
 def register(ctx: Any) -> None:
     ctx.register_tool(
         name="mona_whatsapp_search",
@@ -109,7 +93,7 @@ def register(ctx: Any) -> None:
                 str(args.get("limit", 20)),
             ]
         ),
-        check_fn=lambda: _doctor("wacrawl", "--json", "doctor"),
+        check_fn=lambda: _available("wacrawl"),
     )
 
     ctx.register_tool(
@@ -134,7 +118,7 @@ def register(ctx: Any) -> None:
                 str(args.get("limit", 20)),
             ]
         ),
-        check_fn=lambda: _doctor("wacrawl", "--json", "doctor"),
+        check_fn=lambda: _available("wacrawl"),
     )
 
     ctx.register_tool(
@@ -166,7 +150,7 @@ def register(ctx: Any) -> None:
                 str(args.get("query", "")),
             ]
         ),
-        check_fn=lambda: _doctor("slacrawl", "doctor", "--format", "json"),
+        check_fn=lambda: _available("slacrawl"),
     )
 
     ctx.register_tool(
@@ -198,7 +182,7 @@ def register(ctx: Any) -> None:
                 ),
             ]
         ),
-        check_fn=lambda: _doctor("slacrawl", "doctor", "--format", "json"),
+        check_fn=lambda: _available("slacrawl"),
     )
 
     ctx.register_tool(
@@ -224,7 +208,7 @@ def register(ctx: Any) -> None:
             ],
             timeout=180,
         ),
-        check_fn=lambda: _doctor("summarize", "--help"),
+        check_fn=lambda: _available("summarize"),
     )
 
     ctx.register_tool(
@@ -256,5 +240,5 @@ def register(ctx: Any) -> None:
             ],
             timeout=120,
         ),
-        check_fn=lambda: _doctor("ghcrawl", "doctor", "--json"),
+        check_fn=lambda: _available("ghcrawl"),
     )

@@ -12,6 +12,7 @@ Do not auto-grant or script these permissions:
 - Local CA trust for browser daemons.
 - Slack, GitHub, Google, OpenAI, Twilio, X/Twitter, or other service tokens.
 - Call recording, disclosure, or telecom consent workflows.
+- Public tunnel or HTTPS exposure for `vox` phone bridge callbacks.
 
 Recommended enablement order:
 
@@ -20,5 +21,8 @@ Recommended enablement order:
 3. Add customer secrets through MonoClaw setup or a reviewed config file.
 4. Enable MCP servers only after reviewing their path allow-lists and macOS
    permission prompts.
-5. Keep write-capable social, browser, and telecom tools disabled unless the
+5. Enable the `vox` phone bridge only after configuring call disclosure,
+   `VOX_PUBLIC_BASE_URL`, and exactly one reviewed agent callback
+   (`VOX_AGENT_URL` or `VOX_AGENT_CMD`).
+6. Keep write-capable social, browser, and telecom tools disabled unless the
    customer has explicitly opted in.

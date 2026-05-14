@@ -67,6 +67,7 @@ Recommended V1 contents:
 - bundled Node runtime under `prebuilt/node/current`
 - built `summarize` app
 - built `macos-automator-mcp` app
+- opt-in built `vox` app for an operator-supervised phone bridge service
 - optional built `conduit-mcp` and `ghcrawl` apps
 - `templates/` docs, config examples, plugin skeleton, and curated skills
 

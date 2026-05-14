@@ -68,7 +68,46 @@ grep -q "dry-run: mkdir -p ${HOME_DIR}/.monoclaw/vendor" "${TMP}/install-tools.o
 grep -q "dry-run: cp -R ${PACK} ${HOME_DIR}/.monoclaw/vendor/mona-tools" "${TMP}/install-tools.out"
 grep -q "dry-run: install Mona secretary skills into ${HOME_DIR}/.monoclaw/skills" "${TMP}/install-tools.out"
 grep -q "dry-run: install Mona secretary plugins into ${HOME_DIR}/.monoclaw/plugins" "${TMP}/install-tools.out"
+grep -q "dry-run: seed ${HOME_DIR}/.monoclaw/config.yaml with plugins.enabled including mona-secretary-tools" "${TMP}/install-tools.out"
 grep -q "manual: review ${HOME_DIR}/.monoclaw/vendor/mona-tools/docs/permissions.md before enabling host automation tools" "${TMP}/install-tools.out"
+grep -q '_available("wacrawl")' "${ROOT}/bundle-inputs/vendor/mona-tools/templates/plugins/mona-secretary-tools/__init__.py"
+grep -q "kind: standalone" "${ROOT}/bundle-inputs/vendor/mona-tools/templates/plugins/mona-secretary-tools/plugin.yaml"
+python3 - "${ROOT}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+source_lock = json.loads((root / "bundle-inputs/vendor/mona-tools/source-lock.json").read_text())
+source_tools = {tool["name"]: tool for tool in source_lock["tools"]}
+vox = source_tools["vox"]
+assert vox["mode"] == "node-app"
+assert vox["activation"] == "opt-in"
+assert vox["optional"] is True
+assert vox["entrypoint"] == "dist/cli.js"
+assert vox["build"]["type"] == "node"
+assert vox["build"]["package_manager"] == "pnpm"
+assert "telecom-consent" in vox["required_permissions"]
+
+for name in ("brabble", "sweetlink", "birdclaw"):
+    tool = source_tools[name]
+    assert tool["mode"] == "deferred"
+    assert tool["activation"] == "deferred"
+    assert isinstance(tool.get("promotion_gates"), list) and tool["promotion_gates"]
+
+example = json.loads((root / "bundle-inputs/vendor/mona-tools/tool-lock.example.json").read_text())
+example_tools = {tool["name"]: tool for tool in example["tools"]}
+assert example_tools["vox"]["path"] == "node/apps/vox/dist/cli.js"
+assert example_tools["vox"]["activation"] == "opt-in"
+
+secretary = (root / "bundle-inputs/vendor/mona-tools/templates/config/secretary-tools.example.yaml").read_text()
+assert "vox_phone_bridge:" in secretary
+assert "command: \"~/.monoclaw/vendor/mona-tools/bin/vox\"" in secretary
+
+readme = (root / "bundle-inputs/vendor/mona-tools/templates/docs/README.md").read_text()
+assert "vox" in readme
+assert "Twilio Media Streams" in readme
+PY
 
 PATH="/usr/bin:/bin:/usr/sbin:/sbin" HOME="${HOME_DIR}" \
   bash "${ROOT}/bin/hatch" --apply --tools-pack-root "${PACK}" install-tools | tee "${TMP}/apply-tools.out"
@@ -77,6 +116,8 @@ test -x "${HOME_DIR}/.monoclaw/vendor/mona-tools/bin/wacrawl"
 test -f "${HOME_DIR}/.monoclaw/skills/gmail-assistant/SKILL.md"
 test -f "${HOME_DIR}/.monoclaw/plugins/mona-secretary-tools/plugin.yaml"
 grep -q "Mona secretary tools installed" "${TMP}/apply-tools.out"
+grep -Fq "mona-secretary-tools" "${HOME_DIR}/.monoclaw/config.yaml"
+grep -Fq "enabled:" "${HOME_DIR}/.monoclaw/config.yaml"
 
 printf 'existing skill\n' > "${HOME_DIR}/.monoclaw/skills/gmail-assistant/SKILL.md"
 printf 'existing plugin\n' > "${HOME_DIR}/.monoclaw/plugins/mona-secretary-tools/plugin.yaml"
@@ -86,6 +127,19 @@ grep -q "Keeping existing skill ${HOME_DIR}/.monoclaw/skills/gmail-assistant" "$
 grep -q "Keeping existing plugin ${HOME_DIR}/.monoclaw/plugins/mona-secretary-tools" "${TMP}/apply-tools-again.out"
 grep -q "existing skill" "${HOME_DIR}/.monoclaw/skills/gmail-assistant/SKILL.md"
 grep -q "existing plugin" "${HOME_DIR}/.monoclaw/plugins/mona-secretary-tools/plugin.yaml"
+
+DISABLE_HOME="${TMP}/home-plugin-disabled"
+mkdir -p "${DISABLE_HOME}/.monoclaw"
+cat > "${DISABLE_HOME}/.monoclaw/config.yaml" <<'EOF'
+plugins:
+  disabled:
+    - mona-secretary-tools
+EOF
+PATH="/usr/bin:/bin:/usr/sbin:/sbin" HOME="${DISABLE_HOME}" \
+  bash "${ROOT}/bin/hatch" --apply --tools-pack-root "${PACK}" install-tools | tee "${TMP}/install-tools-disabled.out"
+grep -q "plugins.disabled lists mona-secretary-tools" "${TMP}/install-tools-disabled.out"
+grep -Fq "disabled:" "${DISABLE_HOME}/.monoclaw/config.yaml"
+test "$(grep -c "mona-secretary-tools" "${DISABLE_HOME}/.monoclaw/config.yaml" || true)" -eq 1
 
 printf 'real stray file\n' > "${PACK}/notes.txt"
 if PATH="/usr/bin:/bin:/usr/sbin:/sbin" HOME="${HOME_DIR}" \
@@ -134,6 +188,7 @@ mkdir -p \
   "${BUILD_INPUTS}/vendor/mona-tools/prebuilt/bin" \
   "${BUILD_INPUTS}/vendor/mona-tools/prebuilt/node/current/bin" \
   "${BUILD_INPUTS}/vendor/mona-tools/prebuilt/node/apps/macos-automator-mcp/dist" \
+  "${BUILD_INPUTS}/vendor/mona-tools/prebuilt/node/apps/vox/dist" \
   "${BUILD_INPUTS}/vendor/mona-tools/prebuilt/config" \
   "${BUILD_INPUTS}/vendor/mona-tools/prebuilt/plugins/mona-secretary-tools" \
   "${BUILD_INPUTS}/vendor/mona-tools/prebuilt/docs"
@@ -149,6 +204,7 @@ printf 'v26.0.0\n'
 SH
 chmod +x "${BUILD_INPUTS}/vendor/mona-tools/prebuilt/node/current/bin/node"
 printf 'server fixture\n' > "${BUILD_INPUTS}/vendor/mona-tools/prebuilt/node/apps/macos-automator-mcp/dist/server.js"
+printf 'vox cli fixture\n' > "${BUILD_INPUTS}/vendor/mona-tools/prebuilt/node/apps/vox/dist/cli.js"
 printf '# permissions\n' > "${BUILD_INPUTS}/vendor/mona-tools/prebuilt/docs/permissions.md"
 printf 'mcp_servers: {}\n' > "${BUILD_INPUTS}/vendor/mona-tools/prebuilt/config/mcp_servers.mona.example.yaml"
 printf 'name: mona-secretary-tools\n' > "${BUILD_INPUTS}/vendor/mona-tools/prebuilt/plugins/mona-secretary-tools/plugin.yaml"
@@ -194,9 +250,22 @@ cat > "${BUILD_INPUTS}/vendor/mona-tools/tool-lock.json" <<'JSON'
       "license": "MIT",
       "repository": "https://github.com/steipete/vox",
       "source_ref": "test-fixture",
+      "mode": "node-app",
+      "source": "vendor/mona-tools/prebuilt/node/apps/vox",
+      "path": "node/apps/vox/dist/cli.js",
+      "activation": "opt-in",
+      "required_permissions": ["network", "telecom-consent"]
+    },
+    {
+      "name": "brabble",
+      "version": "0.1.0",
+      "license": "MIT",
+      "repository": "https://github.com/steipete/brabble",
+      "source_ref": "test-fixture",
       "mode": "deferred",
       "activation": "deferred",
-      "required_permissions": ["network", "telecom-consent"]
+      "required_permissions": ["microphone", "launchd"],
+      "promotion_gates": ["signed native binaries", "launchd tests"]
     }
   ],
   "extra_artifacts": [
@@ -294,6 +363,7 @@ mkdir -p \
   "${PREP_FIXTURES}/node/current/bin" \
   "${PREP_FIXTURES}/bin" \
   "${PREP_FIXTURES}/apps/macos-automator-mcp/dist" \
+  "${PREP_FIXTURES}/apps/vox/dist" \
   "${PREP_FIXTURES}/docs" \
   "${PREP_FIXTURES}/config" \
   "${PREP_FIXTURES}/plugins/mona-secretary-tools" \
@@ -309,6 +379,7 @@ printf 'wacrawl fixture\n'
 SH
 chmod +x "${PREP_FIXTURES}/bin/wacrawl"
 printf 'server fixture\n' > "${PREP_FIXTURES}/apps/macos-automator-mcp/dist/server.js"
+printf 'vox cli fixture\n' > "${PREP_FIXTURES}/apps/vox/dist/cli.js"
 printf '# prep permissions\n' > "${PREP_FIXTURES}/docs/permissions.md"
 printf 'mcp_servers: {}\n' > "${PREP_FIXTURES}/config/mcp_servers.mona.example.yaml"
 printf 'name: mona-secretary-tools\n' > "${PREP_FIXTURES}/plugins/mona-secretary-tools/plugin.yaml"
@@ -360,9 +431,26 @@ cat > "${PREP_INPUTS}/vendor/mona-tools/source-lock.json" <<JSON
       "license": "MIT",
       "repository": "https://github.com/steipete/vox",
       "ref": "fixture-vox-ref",
+      "mode": "node-app",
+      "activation": "opt-in",
+      "optional": true,
+      "required_permissions": ["network", "telecom-consent"],
+      "entrypoint": "dist/cli.js",
+      "build": {
+        "type": "copy",
+        "source": "${PREP_FIXTURES}/apps/vox"
+      }
+    },
+    {
+      "name": "brabble",
+      "version": "0.1.0",
+      "license": "MIT",
+      "repository": "https://github.com/steipete/brabble",
+      "ref": "fixture-brabble-ref",
       "mode": "deferred",
       "activation": "deferred",
-      "required_permissions": ["network", "telecom-consent"]
+      "required_permissions": ["microphone", "launchd"],
+      "promotion_gates": ["signed native binaries", "launchd tests"]
     }
   ],
   "extra_artifacts": [
@@ -437,9 +525,26 @@ cat > "${AUTO_PREP_INPUTS}/vendor/mona-tools/source-lock.json" <<JSON
       "license": "MIT",
       "repository": "https://github.com/steipete/vox",
       "ref": "fixture-vox-ref",
+      "mode": "node-app",
+      "activation": "opt-in",
+      "optional": true,
+      "required_permissions": ["network", "telecom-consent"],
+      "entrypoint": "dist/cli.js",
+      "build": {
+        "type": "copy",
+        "source": "${PREP_FIXTURES}/apps/vox"
+      }
+    },
+    {
+      "name": "brabble",
+      "version": "0.1.0",
+      "license": "MIT",
+      "repository": "https://github.com/steipete/brabble",
+      "ref": "fixture-brabble-ref",
       "mode": "deferred",
       "activation": "deferred",
-      "required_permissions": ["network", "telecom-consent"]
+      "required_permissions": ["microphone", "launchd"],
+      "promotion_gates": ["signed native binaries", "launchd tests"]
     }
   ],
   "extra_artifacts": [
@@ -492,13 +597,18 @@ assert tools["wacrawl"]["source"] == "vendor/mona-tools/prebuilt/bin/wacrawl"
 assert tools["macos-automator-mcp"]["source_ref"] == "fixture-automator-ref"
 assert tools["macos-automator-mcp"]["source"] == "vendor/mona-tools/prebuilt/node/apps/macos-automator-mcp"
 assert tools["macos-automator-mcp"]["path"] == "node/apps/macos-automator-mcp/dist/server.js"
-assert "source" not in tools["vox"]
-assert "path" not in tools["vox"]
+assert tools["vox"]["source_ref"] == "fixture-vox-ref"
+assert tools["vox"]["source"] == "vendor/mona-tools/prebuilt/node/apps/vox"
+assert tools["vox"]["path"] == "node/apps/vox/dist/cli.js"
+assert tools["vox"]["activation"] == "opt-in"
+assert tools["brabble"]["promotion_gates"] == ["signed native binaries", "launchd tests"]
 PY
 HATCH_INPUT_ROOT="${PREP_INPUTS}" \
 HATCH_TOOLS_PACKS_ROOT="${PREP_PACK_ROOT}" \
   bash "${ROOT}/scripts/build_mona_tools_pack.sh" | tee "${TMP}/build-prepared.out"
 test -f "${PREP_PACK_ROOT}/mona-secretary-tools/tools-pack-manifest.json"
+test -x "${PREP_PACK_ROOT}/mona-secretary-tools/bin/vox"
+test ! -e "${PREP_PACK_ROOT}/mona-secretary-tools/brabble"
 grep -q "Tools pack verified for mona-secretary-tools" "${TMP}/build-prepared.out"
 
 HATCH_INPUT_ROOT="${BUILD_INPUTS}" \
@@ -507,12 +617,14 @@ HATCH_TOOLS_PACKS_ROOT="${BUILD_PACK_ROOT}" \
 BUILT_PACK="${BUILD_PACK_ROOT}/mona-secretary-tools"
 test -x "${BUILT_PACK}/bin/wacrawl"
 test -x "${BUILT_PACK}/bin/macos-automator-mcp"
+test -x "${BUILT_PACK}/bin/vox"
 test -f "${BUILT_PACK}/node/current/bin/node"
 test -f "${BUILT_PACK}/node/apps/macos-automator-mcp/dist/server.js"
+test -f "${BUILT_PACK}/node/apps/vox/dist/cli.js"
 test -f "${BUILT_PACK}/docs/permissions.md"
 test -f "${BUILT_PACK}/config/mcp_servers.mona.example.yaml"
 test -f "${BUILT_PACK}/plugins/mona-secretary-tools/plugin.yaml"
-test ! -e "${BUILT_PACK}/vox"
+test ! -e "${BUILT_PACK}/brabble"
 test -f "${BUILT_PACK}/tools-pack-manifest.json"
 grep -q "Tools pack verified for mona-secretary-tools" "${TMP}/build-enabled.out"
 

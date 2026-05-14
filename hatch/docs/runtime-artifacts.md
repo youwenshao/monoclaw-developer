@@ -16,8 +16,8 @@ Keep these environments separate in code, docs, logs, and product claims:
    network downloads, and local source checkouts.
 2. **Prepared bundle**: the immutable `dist/` tree copied to a provisioning
    medium. Hatch verifies its manifest before mutating the target Mac. Optional
-   large sidecar payloads such as model packs live beside `dist/` and carry
-   their own manifests.
+   large sidecar payloads such as model packs and Mona secretary `tool-packs/`
+   live beside `dist/` and carry their own manifests.
 3. **Installed customer runtime**: `~/.monoclaw/` on the target Mac. It uses
    bundle-provided runtime files, support runtimes, skills, and launchd
    configuration. Hatch makes the bundled `monoclaw` runtime runnable, then
@@ -51,6 +51,28 @@ assembler creates an optional sibling sidecar at
 `dist/hatch-manifest.json`; it has its own `model-pack-manifest.json` and is
 installed with `dist/install-gemma-model.sh`.
 
+By default (`HATCH_INCLUDE_MONA_TOOLS` not set to `0`), the assembler also
+builds `tool-packs/mona-secretary-tools/` beside `dist/`. That Mona secretary
+tools pack is not part of `dist/hatch-manifest.json`; it ships its own
+`tools-pack-manifest.json` and is installed after the core bundle via
+`dist/install-mona-tools.sh` (invoked from `dist/install.sh`). Copy `tool-packs/`
+to the provisioning medium next to `dist/`, the same way optional model packs are
+copied. Omit the directory only when you disabled Mona at build time or plan to
+skip install-time Mona with `HATCH_INSTALL_MONA_TOOLS=0` on the target.
+
+A second sidecar slot is reserved for **skill-deps-pack** at
+`tool-packs/skill-deps-pack/`. It is the per-skill counterpart to Mona
+and exists for small CLI dependencies that move individual MonoClaw
+skills from `external_runtime_only` to `provisioned_user_config_required`
+in their `metadata.monoclaw.provisioning` block. The pack is **disabled
+by default** (`HATCH_INCLUDE_SKILL_DEPS=1` to enable). When enabled and
+populated, it follows the same shape as the Mona pack:
+`bundle-inputs/vendor/skill-deps/tool-lock.json` drives the build, the
+output sits beside `dist/`, the install post-step is
+`dist/install-skill-deps.sh`, and `HATCH_INSTALL_SKILL_DEPS=0` skips the
+post-step on the target. See `bundle-inputs/vendor/skill-deps/README.md`
+for the contract and the per-binary PR checklist.
+
 `scripts/build_wheelhouse.sh` is the canonical helper for populating
 `bundle-inputs/vendor/wheelhouse/` on the assembly machine. It builds/downloads
 wheels for bootstrap tools (`pip`, `setuptools`, `wheel`) and
@@ -58,7 +80,9 @@ wheels for bootstrap tools (`pip`, `setuptools`, `wheel`) and
 need to refresh the directory from scratch. The target Mac install remains
 offline for core runtime dependencies.
 
-After `dist/` is copied to a pendrive, the target Mac happy path is:
+Copy both `dist/` and (when built) sibling directories such as `tool-packs/` and
+optional `model-packs/` under the same parent on the pendrive. After copying,
+the target Mac happy path is:
 
 ```bash
 cd /Volumes/<PENDRIVE>/dist
@@ -66,7 +90,8 @@ cd /Volumes/<PENDRIVE>/dist
 ```
 
 `install.sh` is generated into the prepared bundle and invokes
-`bin/hatch --apply --bundle-root <dist> install`.
+`bin/hatch --apply --bundle-root <dist> install`, then runs `install-mona-tools.sh`
+when Mona tools are enabled at install time unless `HATCH_INSTALL_MONA_TOOLS=0`.
 
 ## Prepared Bundle Layout
 
@@ -75,6 +100,7 @@ dist/
   hatch-manifest.json
   install.sh
   install-gemma-model.sh
+  install-mona-tools.sh
   bin/
     hatch
   lib/
@@ -104,6 +130,13 @@ model-packs/
   gemma-4-e4b/
     model-pack-manifest.json
     gemma-4-e4b.gguf
+
+tool-packs/
+  mona-secretary-tools/
+    tools-pack-manifest.json
+    bin/
+    plugins/
+    ...
 ```
 
 The layout may omit optional directories when the manifest marks the matching

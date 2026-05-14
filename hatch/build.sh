@@ -239,6 +239,20 @@ stage_mona_tools_pack() {
     bash "${HATCH_ROOT}/scripts/build_mona_tools_pack.sh"
 }
 
+stage_skill_deps_pack() {
+  # Phase 5 scaffolding for the skill readiness uplift program.
+  # OFF by default; even when ON the underlying script is a no-op until
+  # `bundle-inputs/vendor/skill-deps/tool-lock.json` is populated.
+  if [[ "${HATCH_INCLUDE_SKILL_DEPS:-0}" != "1" ]]; then
+    return
+  fi
+
+  HATCH_INPUT_ROOT="${HATCH_INPUT_ROOT}" \
+  HATCH_TOOLS_PACKS_ROOT="${HATCH_TOOLS_PACKS_ROOT}" \
+  HATCH_TARGET_ARCH="${HATCH_TARGET_ARCH}" \
+    bash "${HATCH_ROOT}/scripts/build_skill_deps_pack.sh"
+}
+
 stage_runtime_skills() {
   if [[ -d "${HATCH_DIST_ROOT}/vendor/skills" ]]; then
     log "Using curated vendor/skills from bundle inputs"
@@ -270,8 +284,9 @@ stage_bundle() {
   cp "${HATCH_ROOT}/templates/install.sh" "${HATCH_DIST_ROOT}/install.sh"
   cp "${HATCH_ROOT}/templates/install-gemma-model.sh" "${HATCH_DIST_ROOT}/install-gemma-model.sh"
   cp "${HATCH_ROOT}/templates/install-mona-tools.sh" "${HATCH_DIST_ROOT}/install-mona-tools.sh"
+  cp "${HATCH_ROOT}/templates/install-skill-deps.sh" "${HATCH_DIST_ROOT}/install-skill-deps.sh"
   cp "${HATCH_ROOT}/tests/hatch_dry_run_tests.sh" "${HATCH_DIST_ROOT}/tests/run-hatch-dry-run.sh"
-  chmod +x "${HATCH_DIST_ROOT}/bin/hatch" "${HATCH_DIST_ROOT}/install.sh" "${HATCH_DIST_ROOT}/install-gemma-model.sh" "${HATCH_DIST_ROOT}/install-mona-tools.sh" "${HATCH_DIST_ROOT}/tests/run-hatch-dry-run.sh"
+  chmod +x "${HATCH_DIST_ROOT}/bin/hatch" "${HATCH_DIST_ROOT}/install.sh" "${HATCH_DIST_ROOT}/install-gemma-model.sh" "${HATCH_DIST_ROOT}/install-mona-tools.sh" "${HATCH_DIST_ROOT}/install-skill-deps.sh" "${HATCH_DIST_ROOT}/tests/run-hatch-dry-run.sh"
 
   build_runtime_web_assets
   build_runtime_wheel "${HATCH_DIST_ROOT}/runtime"
@@ -299,6 +314,7 @@ EOF
   stage_runtime_skills
   stage_model_packs
   stage_mona_tools_pack
+  stage_skill_deps_pack
 
   python3 "${HATCH_ROOT}/scripts/generate_manifest.py" \
     --bundle-root "${HATCH_DIST_ROOT}" \

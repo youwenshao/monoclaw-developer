@@ -17,6 +17,7 @@ bash scripts/build_wheelhouse.sh
 ./build.sh
 
 # Target Mac, from the copied dist/ directory on the pendrive.
+# Copy dist/ and (when built) tool-packs/ to the same parent on the medium — see below.
 ./install.sh
 ```
 
@@ -72,7 +73,12 @@ and Python wheel from `../monoclaw-runtime`, writes `hatch-manifest.json` with
 artifact sizes and SHA-256 hashes, and verifies the bundle before returning. If
 no curated `bundle-inputs/vendor/skills` tree exists, the builder stages the
 runtime checkout's bundled `skills/` tree. Copy the resulting `dist/` directory
-to the provisioning pendrive. When the optional Gemma input is present, the
+to the provisioning pendrive. By default the builder also writes a sibling
+`tool-packs/mona-secretary-tools/` directory (Mona secretary tools sidecar, not
+inside `dist/`). Copy that sibling beside `dist/` on the pendrive so
+`dist/install-mona-tools.sh` can run after `./install.sh`; omit it only when you
+built with `HATCH_INCLUDE_MONA_TOOLS=0` or skip install-time Mona with
+`HATCH_INSTALL_MONA_TOOLS=0` on the target. When the optional Gemma input is present, the
 builder writes a sibling `model-packs/gemma-4-e4b/` directory with its own
 `model-pack-manifest.json`; copy that sibling directory to the pendrive beside
 `dist/` if you want to avoid downloading the model on the target Mac.

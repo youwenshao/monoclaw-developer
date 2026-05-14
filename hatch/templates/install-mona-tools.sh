@@ -11,7 +11,9 @@ fi
 
 if [[ ! -d "${TOOLS_PACK_ROOT}" ]]; then
   printf 'Mona secretary tools pack not found: %s\n' "${TOOLS_PACK_ROOT}" >&2
-  printf 'Rebuild Hatch with HATCH_INCLUDE_MONA_TOOLS=1 and a valid vendor/mona-tools/tool-lock.json, or set HATCH_INSTALL_MONA_TOOLS=0 to skip this post-install step.\n' >&2
+  printf 'Expected tool-packs/mona-secretary-tools as a sibling of this bundle directory (mirror ./build.sh output on the assembly machine).\n' >&2
+  printf 'Copy both dist/ and tool-packs/ to the provisioning medium, or rebuild with HATCH_INCLUDE_MONA_TOOLS=1 if the pack was never produced.\n' >&2
+  printf 'Set HATCH_INSTALL_MONA_TOOLS=0 on the target to skip this post-install step.\n' >&2
   exit 1
 fi
 

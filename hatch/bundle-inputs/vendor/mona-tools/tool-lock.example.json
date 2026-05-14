@@ -87,8 +87,11 @@
       "license": "MIT",
       "repository": "https://github.com/steipete/vox",
       "source_ref": "replace-with-commit-or-release",
-      "mode": "deferred",
-      "activation": "deferred",
+      "mode": "node-app",
+      "source": "vendor/mona-tools/prebuilt/node/apps/vox",
+      "path": "node/apps/vox/dist/cli.js",
+      "activation": "opt-in",
+      "optional": true,
       "required_permissions": ["network", "telecom-consent"]
     },
     {
@@ -99,7 +102,14 @@
       "source_ref": "replace-with-commit-or-release",
       "mode": "deferred",
       "activation": "deferred",
-      "required_permissions": ["microphone", "launchd"]
+      "required_permissions": ["microphone", "launchd"],
+      "promotion_gates": [
+        "signed native binaries",
+        "PortAudio and whisper.cpp dylibs bundled and smoke-tested",
+        "model pack with size and checksum policy",
+        "microphone permission flow documented",
+        "launchd lifecycle tests"
+      ]
     },
     {
       "name": "sweetlink",
@@ -109,7 +119,14 @@
       "source_ref": "replace-with-commit-or-release",
       "mode": "deferred",
       "activation": "deferred",
-      "required_permissions": ["browser", "local-ca"]
+      "required_permissions": ["browser", "local-ca"],
+      "promotion_gates": [
+        "clear developer-pack scope separate from secretary pack",
+        "Chrome detection and controlled-profile policy",
+        "mkcert or local CA trust flow documented",
+        "daemon lifecycle tests",
+        "non-dev default config"
+      ]
     },
     {
       "name": "birdclaw",
@@ -119,7 +136,15 @@
       "source_ref": "replace-with-commit-or-release",
       "mode": "deferred",
       "activation": "deferred",
-      "required_permissions": ["network", "social-account"]
+      "required_permissions": ["network", "social-account"],
+      "promotion_gates": [
+        "Twitter/X product and legal review",
+        "read-only wrappers before any write actions",
+        "write-action disablement by default",
+        "Node 26 validation",
+        "local data retention and deletion policy",
+        "WIP schema acceptance criteria"
+      ]
     }
   ],
   "extra_artifacts": [

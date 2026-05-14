@@ -11,6 +11,7 @@ COMMAND="preflight"
 HATCH_BUNDLE_ROOT="${HATCH_ROOT}/dist"
 HATCH_MODEL_PACK_ROOT=""
 HATCH_TOOLS_PACK_ROOT=""
+HATCH_SKILL_DEPS_PACK_ROOT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -34,7 +35,11 @@ while [[ $# -gt 0 ]]; do
       HATCH_TOOLS_PACK_ROOT="$(cd "$2" && pwd)"
       shift 2
       ;;
-    prepare-bundle|preflight|cleanup-existing|install|verify|doctor|verify-local-inference|verify-model-pack|install-model|verify-tools-pack|install-tools)
+    --skill-deps-pack-root)
+      HATCH_SKILL_DEPS_PACK_ROOT="$(cd "$2" && pwd)"
+      shift 2
+      ;;
+    prepare-bundle|preflight|cleanup-existing|install|verify|doctor|verify-local-inference|verify-model-pack|install-model|verify-tools-pack|install-tools|verify-skill-deps|install-skill-deps|verify-skill-readiness)
       COMMAND="$1"
       shift
       ;;
@@ -49,8 +54,11 @@ Usage:
   hatch/bin/hatch [--dry-run|--apply] [--bundle-root dist] install
   hatch/bin/hatch [--dry-run|--apply] [--bundle-root dist] [--model-pack-root model-packs/gemma-4-e4b] install-model
   hatch/bin/hatch [--dry-run|--apply] [--bundle-root dist] [--tools-pack-root tool-packs/mona-secretary-tools] install-tools
+  hatch/bin/hatch [--dry-run|--apply] [--bundle-root dist] [--skill-deps-pack-root tool-packs/skill-deps-pack] verify-skill-deps
+  hatch/bin/hatch [--dry-run|--apply] [--bundle-root dist] [--skill-deps-pack-root tool-packs/skill-deps-pack] install-skill-deps
   hatch/bin/hatch [--dry-run|--apply] verify
   hatch/bin/hatch [--dry-run|--apply] verify-local-inference
+  hatch/bin/hatch [--dry-run|--apply] verify-skill-readiness
   hatch/bin/hatch [--dry-run|--apply] doctor
 
 Hatch defaults to dry-run. Pass --apply only on a machine intended for provisioning.
@@ -69,6 +77,9 @@ if [[ -z "${HATCH_MODEL_PACK_ROOT}" ]]; then
 fi
 if [[ -z "${HATCH_TOOLS_PACK_ROOT}" ]]; then
   HATCH_TOOLS_PACK_ROOT="$(cd "${HATCH_BUNDLE_ROOT}/.." && pwd)/tool-packs/mona-secretary-tools"
+fi
+if [[ -z "${HATCH_SKILL_DEPS_PACK_ROOT}" ]]; then
+  HATCH_SKILL_DEPS_PACK_ROOT="$(cd "${HATCH_BUNDLE_ROOT}/.." && pwd)/tool-packs/skill-deps-pack"
 fi
 
 macos_version() {
@@ -940,6 +951,213 @@ install_tools_pack_plugins() {
   log_ok "Mona secretary plugins installed into ${target_dir}"
 }
 
+# Prefer MonoClaw-home interpreters (runtime venv, bundled vendor python), then
+# the Hatch bundle staging python, then host python3. Must support `import yaml`.
+hatch_python_with_yaml() {
+  local home_dir="${1:-}"
+  local candidate
+
+  [[ -n "${home_dir}" ]] || return 1
+  for candidate in \
+    "${home_dir}/vendor/runtime/venv/bin/python" \
+    "${home_dir}/vendor/python/current/bin/python3" \
+    "${home_dir}/vendor/python/current/bin/python3.13" \
+    "${home_dir}/vendor/python/current/bin/python3.12" \
+    "${home_dir}/vendor/python/current/bin/python3.11"; do
+    if [[ -x "${candidate}" ]] && "${candidate}" -c "import yaml" >/dev/null 2>&1; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  if candidate="$(hatch_manifest_python "${HATCH_BUNDLE_ROOT}" 2>/dev/null)"; then
+    if [[ -n "${candidate}" && -x "${candidate}" ]] && "${candidate}" -c "import yaml" >/dev/null 2>&1; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  fi
+
+  if have_command python3 && python3 -c "import yaml" >/dev/null 2>&1; then
+    command -v python3
+    return 0
+  fi
+
+  return 1
+}
+
+# True when config lists plugin_id under plugins.disabled (stdlib scan only).
+mona_secretary_disabled_in_config() {
+  local config_path="$1"
+  local plugin_id="$2"
+
+  python3 - "${config_path}" "${plugin_id}" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+plugin_id = sys.argv[2]
+
+if not path.is_file():
+    sys.exit(1)
+
+lines = path.read_text(encoding="utf-8").splitlines()
+in_plugins = False
+in_disabled = False
+disabled_col = None
+
+for raw in lines:
+    line = raw.split("#", 1)[0]
+    if not line.strip():
+        continue
+    stripped = line.lstrip(" \t")
+    indent = len(line) - len(stripped)
+    if indent == 0:
+        if stripped.startswith("plugins:"):
+            in_plugins = True
+            in_disabled = False
+            disabled_col = None
+        else:
+            in_plugins = False
+        continue
+    if not in_plugins:
+        continue
+    if stripped.startswith("disabled:"):
+        in_disabled = True
+        disabled_col = indent
+        continue
+    if in_disabled and disabled_col is not None:
+        if stripped.startswith("- "):
+            item = stripped[2:].strip().strip("'\"")
+            if item == plugin_id:
+                sys.exit(0)
+        elif indent <= disabled_col:
+            in_disabled = False
+
+sys.exit(1)
+PY
+}
+
+# Opt the Hatch-shipped Mona secretary plugin into Runtime discovery by listing
+# it in plugins.enabled. Does not merge example MCP or secretary YAML, and does
+# not override plugins.disabled (warn + skip when the plugin is disabled).
+seed_mona_secretary_plugins_enabled() {
+  local home_dir="$1"
+  local config_path="${home_dir}/config.yaml"
+  local plugin_id="mona-secretary-tools"
+  local python_bin
+
+  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+    printf '  dry-run: seed %s with plugins.enabled including %s (skipped if plugins.disabled lists it)\n' \
+      "${config_path}" "${plugin_id}"
+    return 0
+  fi
+
+  mkdir -p "${home_dir}"
+
+  if [[ -f "${config_path}" ]] && mona_secretary_disabled_in_config "${config_path}" "${plugin_id}"; then
+    log_warn "plugins.disabled lists ${plugin_id}; not adding to plugins.enabled (override manually if intended)"
+    return 0
+  fi
+
+  if python_bin="$(hatch_python_with_yaml "${home_dir}")"; then
+    local merge_out
+    merge_out="$(mktemp "${TMPDIR:-/tmp}/hatch-mona-plugins.XXXXXX")"
+    PYTHONDONTWRITEBYTECODE=1 "${python_bin}" - "${config_path}" "${plugin_id}" <<'PY' >"${merge_out}"
+import sys
+from pathlib import Path
+
+import yaml  # type: ignore
+
+config_path = Path(sys.argv[1])
+plugin_id = sys.argv[2]
+
+if config_path.exists():
+    text = config_path.read_text(encoding="utf-8")
+    try:
+        data = yaml.safe_load(text) or {}
+    except yaml.YAMLError:
+        sys.stderr.write("invalid YAML in config\n")
+        sys.exit(1)
+else:
+    data = {}
+
+if not isinstance(data, dict):
+    data = {}
+
+plugins = data.get("plugins")
+if not isinstance(plugins, dict):
+    plugins = {}
+
+disabled = plugins.get("disabled")
+if isinstance(disabled, list) and plugin_id in disabled:
+    print("disabled")
+    sys.exit(0)
+
+enabled = plugins.get("enabled")
+if enabled is None:
+    enabled_list: list = []
+elif isinstance(enabled, list):
+    enabled_list = list(enabled)
+else:
+    enabled_list = [enabled]
+
+if plugin_id in enabled_list:
+    print("noop")
+    sys.exit(0)
+
+enabled_list.append(plugin_id)
+plugins["enabled"] = enabled_list
+data["plugins"] = plugins
+
+config_path.parent.mkdir(parents=True, exist_ok=True)
+with config_path.open("w", encoding="utf-8") as handle:
+    yaml.safe_dump(
+        data,
+        handle,
+        sort_keys=False,
+        default_flow_style=False,
+        allow_unicode=True,
+    )
+print("merged")
+PY
+    py_status=$?
+    merge_result="$(tr -d '\r\n' < "${merge_out}")"
+    rm -f "${merge_out}"
+    if [[ "${py_status}" -ne 0 ]]; then
+      log_warn "Failed to merge ${config_path} for ${plugin_id} (python exit ${py_status})"
+      return 0
+    fi
+    case "${merge_result}" in
+      disabled)
+        log_warn "plugins.disabled lists ${plugin_id}; not adding to plugins.enabled (override manually if intended)"
+        ;;
+      noop)
+        log_ok "plugins.enabled already lists ${plugin_id}"
+        ;;
+      merged)
+        log_ok "Updated ${config_path} with plugins.enabled including ${plugin_id}"
+        ;;
+      *)
+        log_warn "Unexpected plugins.enabled seed result for ${config_path}: ${merge_result}"
+        ;;
+    esac
+    return 0
+  fi
+
+  # No PyYAML: only safe to bootstrap an empty config without clobbering user YAML.
+  if [[ -f "${config_path}" ]]; then
+    log_warn "PyYAML is required to merge ${config_path}; add ${plugin_id} under plugins.enabled manually"
+    return 0
+  fi
+
+  cat > "${config_path}" <<EOF
+plugins:
+  enabled:
+    - ${plugin_id}
+EOF
+  log_ok "Created ${config_path} with plugins.enabled including ${plugin_id}"
+}
+
 run_install_tools() {
   local home_dir
   local target_dir
@@ -953,6 +1171,7 @@ run_install_tools() {
   log_action cp -R "${HATCH_TOOLS_PACK_ROOT}" "${target_dir}"
   install_tools_pack_skills "${HATCH_TOOLS_PACK_ROOT}/skills" "${home_dir}/skills"
   install_tools_pack_plugins "${HATCH_TOOLS_PACK_ROOT}/plugins" "${home_dir}/plugins"
+  seed_mona_secretary_plugins_enabled "${home_dir}"
   printf '  manual: review %s before enabling host automation tools\n' "${target_dir}/docs/permissions.md"
   printf '  manual: copy MCP examples from %s only after reviewing path and permission scopes\n' "${target_dir}/config"
   if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
@@ -962,10 +1181,313 @@ run_install_tools() {
   fi
 }
 
+run_verify_skill_deps() {
+  log_step "skill-deps" "Checking optional skill-deps pack"
+  if [[ ! -d "${HATCH_SKILL_DEPS_PACK_ROOT}" ]]; then
+    log_warn "Skill dependencies pack not present at ${HATCH_SKILL_DEPS_PACK_ROOT} (Phase 5 scaffolding ships empty by default)"
+    return
+  fi
+  if [[ ! -f "${HATCH_SKILL_DEPS_PACK_ROOT}/tools-pack-manifest.json" ]]; then
+    warn_or_die "Skill dependencies pack missing tools-pack-manifest.json at ${HATCH_SKILL_DEPS_PACK_ROOT}"
+    return
+  fi
+  verify_tools_pack_manifest "${HATCH_SKILL_DEPS_PACK_ROOT}" | sed 's/^/  ok: /'
+}
+
+run_verify_skill_readiness() {
+  local home_dir
+  home_dir="$(monoclaw_home)"
+
+  log_step "skill-readiness" "Auditing installed skills against metadata.monoclaw.provisioning"
+
+  local python_bin=""
+  if [[ -x "${home_dir}/vendor/runtime/venv/bin/python3" ]]; then
+    python_bin="${home_dir}/vendor/runtime/venv/bin/python3"
+  elif python_bin="$(hatch_manifest_python "${HATCH_BUNDLE_ROOT}" 2>/dev/null)"; then
+    :
+  elif command -v python3 >/dev/null 2>&1; then
+    python_bin="$(command -v python3)"
+  else
+    log_warn "No python3 available to parse SKILL.md frontmatter"
+    return
+  fi
+
+  local exit_code=0
+  PYTHONDONTWRITEBYTECODE=1 \
+  MONOCLAW_HOME="${home_dir}" \
+  HATCH_DRY_RUN="${HATCH_DRY_RUN}" \
+  HATCH_SKILL_READINESS_FAIL_ON="${HATCH_SKILL_READINESS_FAIL_ON:-blocked_unknown}" \
+    "${python_bin}" - <<'PY' || exit_code=$?
+import os
+import re
+import sys
+from pathlib import Path
+
+HOME = Path(os.environ["MONOCLAW_HOME"])
+EXCLUDED = {".git", ".github", ".hub", ".archive"}
+
+POLICIES = {
+    "stock_bundle_candidate",
+    "provisioned_user_config_required",
+    "external_runtime_only",
+    "blocked_unknown",
+}
+
+LABELS = {
+    "stock_bundle_candidate": "Ready",
+    "provisioned_user_config_required": "Setup required",
+    "external_runtime_only": "External runtime",
+    "blocked_unknown": "Unclassified",
+}
+
+
+def extract_frontmatter(text: str) -> str:
+    if not text.startswith("---"):
+        return ""
+    m = re.search(r"\n---\s*(?:\n|$)", text[3:])
+    if not m:
+        return ""
+    return text[3 : m.start() + 3]
+
+
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
+
+
+def find_provisioning_block(yaml_text: str) -> list[str] | None:
+    """Locate the metadata.monoclaw.provisioning block lines.
+
+    Avoids depending on PyYAML so this gate works under
+    ``/usr/bin/python3`` on a freshly imaged Mac (the runtime venv with
+    PyYAML may not exist yet at the moment ``verify-skill-readiness``
+    is first invoked).
+    """
+    lines = yaml_text.splitlines()
+    i = 0
+    n = len(lines)
+    while i < n:
+        line = lines[i]
+        if line.lstrip(" ").startswith("metadata:") and _indent(line) == 0:
+            meta_indent = 0
+            j = i + 1
+            mc_indent = None
+            while j < n:
+                child = lines[j]
+                if not child.strip():
+                    j += 1
+                    continue
+                if _indent(child) <= meta_indent:
+                    break
+                if child.lstrip(" ").startswith("monoclaw:"):
+                    mc_indent = _indent(child)
+                    k = j + 1
+                    prov_indent = None
+                    while k < n:
+                        prov_line = lines[k]
+                        if not prov_line.strip():
+                            k += 1
+                            continue
+                        if _indent(prov_line) <= mc_indent:
+                            break
+                        if prov_line.lstrip(" ").startswith("provisioning:"):
+                            prov_indent = _indent(prov_line)
+                            block_lines = []
+                            m = k + 1
+                            while m < n:
+                                bl = lines[m]
+                                if bl.strip() and _indent(bl) <= prov_indent:
+                                    break
+                                block_lines.append(bl)
+                                m += 1
+                            return block_lines
+                        k += 1
+                    return None
+                j += 1
+            return None
+        i += 1
+    return None
+
+
+_BUNDLE_POLICY_RE = re.compile(r"^\s*bundle_policy:\s*([A-Za-z_][A-Za-z0-9_]*)")
+_SYS_DEPS_HEADER_RE = re.compile(r"^(\s*)system_dependencies:\s*(.*)$")
+_INLINE_LIST_RE = re.compile(r"\[([^\]]*)\]")
+_LIST_ITEM_RE = re.compile(r"^\s*-\s+(.*)$")
+
+
+def policy_from_block(block: list[str] | None) -> str:
+    if not block:
+        return "blocked_unknown"
+    for line in block:
+        m = _BUNDLE_POLICY_RE.match(line)
+        if m:
+            value = m.group(1).strip()
+            return value if value in POLICIES else "blocked_unknown"
+    return "blocked_unknown"
+
+
+def _strip_quote(value: str) -> str:
+    value = value.strip()
+    if value.startswith(("'", '"')) and value.endswith(("'", '"')) and len(value) >= 2:
+        return value[1:-1]
+    return value
+
+
+def system_deps_from_block(block: list[str] | None) -> list[str]:
+    if not block:
+        return []
+    out: list[str] = []
+    in_list = False
+    list_indent = 0
+    for line in block:
+        header = _SYS_DEPS_HEADER_RE.match(line)
+        if header:
+            list_indent = len(header.group(1))
+            inline = header.group(2).strip()
+            inline_match = _INLINE_LIST_RE.match(inline)
+            if inline_match:
+                for raw in inline_match.group(1).split(","):
+                    item = _strip_quote(raw.strip())
+                    if item:
+                        out.append(item)
+                in_list = False
+                continue
+            in_list = True
+            continue
+        if in_list:
+            if not line.strip():
+                continue
+            indent = _indent(line)
+            if indent <= list_indent:
+                in_list = False
+                continue
+            item_match = _LIST_ITEM_RE.match(line)
+            if item_match:
+                item = _strip_quote(item_match.group(1).strip())
+                if item:
+                    out.append(item)
+    return out
+
+
+def policy_for(yaml_text: str) -> str:
+    return policy_from_block(find_provisioning_block(yaml_text))
+
+
+def system_deps_for(yaml_text: str) -> list[str]:
+    return system_deps_from_block(find_provisioning_block(yaml_text))
+
+
+def find_dep_binary(name: str) -> Path | None:
+    candidates = [
+        HOME / "vendor" / "skill-deps" / "bin" / name,
+        HOME / "vendor" / "mona-tools" / "bin" / name,
+    ]
+    for path in candidates:
+        if path.is_file() and os.access(path, os.X_OK):
+            return path
+    return None
+
+
+def walk_skills(root: Path):
+    if not root.is_dir():
+        return
+    for skill_md in sorted(root.rglob("SKILL.md")):
+        rel = skill_md.relative_to(root)
+        if any(p in EXCLUDED or p.startswith(".") for p in rel.parts[:-1]):
+            continue
+        yield skill_md
+
+
+totals = {p: 0 for p in POLICIES}
+missing_deps: list[tuple[str, str]] = []
+skill_count = 0
+
+for tree in (HOME / "skills",):
+    for skill_md in walk_skills(tree):
+        skill_count += 1
+        try:
+            text = skill_md.read_text(encoding="utf-8")
+        except OSError:
+            totals["blocked_unknown"] += 1
+            continue
+        yaml_text = extract_frontmatter(text)
+        policy = policy_for(yaml_text)
+        totals[policy] += 1
+        for dep in system_deps_for(yaml_text):
+            if find_dep_binary(dep) is None:
+                missing_deps.append((str(skill_md), dep))
+
+print(f"  skills checked: {skill_count}")
+for policy in (
+    "stock_bundle_candidate",
+    "provisioned_user_config_required",
+    "external_runtime_only",
+    "blocked_unknown",
+):
+    print(f"  {LABELS[policy]:<22} {totals[policy]:>3}  ({policy})")
+
+fail_on = os.environ.get("HATCH_SKILL_READINESS_FAIL_ON", "blocked_unknown").strip()
+fail = False
+if fail_on:
+    threshold_count = totals.get(fail_on, 0)
+    if threshold_count > 0:
+        if os.environ.get("HATCH_DRY_RUN", "true") == "true":
+            print(f"  warn: {threshold_count} skill(s) at threshold '{fail_on}'", file=sys.stderr)
+        else:
+            print(f"  fail: {threshold_count} skill(s) at threshold '{fail_on}'", file=sys.stderr)
+            fail = True
+
+if missing_deps:
+    print(
+        f"  note: {len(missing_deps)} skill(s) declare system_dependencies that are not installed under "
+        "~/.monoclaw/vendor/skill-deps/bin or ~/.monoclaw/vendor/mona-tools/bin"
+    )
+    for path, dep in missing_deps[:5]:
+        print(f"    - {dep!r} required by {path}")
+    if len(missing_deps) > 5:
+        print(f"    ... ({len(missing_deps) - 5} more)")
+
+sys.exit(1 if fail else 0)
+PY
+
+  if [[ ${exit_code} -ne 0 ]]; then
+    if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+      log_warn "skill-readiness gate would fail (dry-run)"
+    else
+      die "skill-readiness gate failed"
+    fi
+  else
+    log_ok "skill readiness audit passed"
+  fi
+}
+
+run_install_skill_deps() {
+  local home_dir
+  local target_dir
+  home_dir="$(monoclaw_home)"
+  target_dir="${home_dir}/vendor/skill-deps"
+
+  if [[ ! -d "${HATCH_SKILL_DEPS_PACK_ROOT}" ]]; then
+    log_warn "No skill-deps pack at ${HATCH_SKILL_DEPS_PACK_ROOT}; nothing to install (default for current bundles)"
+    return
+  fi
+
+  run_verify_skill_deps
+  log_step "skill-deps" "Installing optional skill dependencies"
+  log_action rm -rf "${target_dir}"
+  log_action mkdir -p "${home_dir}/vendor"
+  log_action cp -R "${HATCH_SKILL_DEPS_PACK_ROOT}" "${target_dir}"
+  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+    printf '  dry-run: skill dependencies installed at %s\n' "${target_dir}"
+  else
+    log_ok "skill dependencies installed at ${target_dir}"
+  fi
+}
+
 run_doctor() {
   run_preflight
   run_verify
   run_verify_local_inference
+  run_verify_skill_readiness
   log_step "doctor" "Hatch doctor complete"
 }
 
@@ -999,6 +1521,15 @@ case "${COMMAND}" in
     ;;
   install-tools)
     run_install_tools
+    ;;
+  verify-skill-deps)
+    run_verify_skill_deps
+    ;;
+  install-skill-deps)
+    run_install_skill_deps
+    ;;
+  verify-skill-readiness)
+    run_verify_skill_readiness
     ;;
   doctor)
     run_doctor
