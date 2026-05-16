@@ -68,8 +68,12 @@ grep -q "dry-run: mkdir -p ${HOME_DIR}/.monoclaw/vendor" "${TMP}/install-tools.o
 grep -q "dry-run: cp -R ${PACK} ${HOME_DIR}/.monoclaw/vendor/mona-tools" "${TMP}/install-tools.out"
 grep -q "dry-run: install Mona secretary skills into ${HOME_DIR}/.monoclaw/skills" "${TMP}/install-tools.out"
 grep -q "dry-run: install Mona secretary plugins into ${HOME_DIR}/.monoclaw/plugins" "${TMP}/install-tools.out"
-grep -q "dry-run: seed ${HOME_DIR}/.monoclaw/config.yaml with plugins.enabled including mona-secretary-tools" "${TMP}/install-tools.out"
 grep -q "manual: review ${HOME_DIR}/.monoclaw/vendor/mona-tools/docs/permissions.md before enabling host automation tools" "${TMP}/install-tools.out"
+grep -q "next: run monoclaw setup system to review Mona permissions, MCP templates, and tool activation" "${TMP}/install-tools.out"
+if grep -q "plugins.enabled" "${TMP}/install-tools.out"; then
+  printf 'install-tools should not activate Mona plugins; run monoclaw setup system for reviewed activation\n' >&2
+  exit 1
+fi
 grep -q '_available("wacrawl")' "${ROOT}/bundle-inputs/vendor/mona-tools/templates/plugins/mona-secretary-tools/__init__.py"
 grep -q "kind: standalone" "${ROOT}/bundle-inputs/vendor/mona-tools/templates/plugins/mona-secretary-tools/plugin.yaml"
 python3 - "${ROOT}" <<'PY'
@@ -116,8 +120,7 @@ test -x "${HOME_DIR}/.monoclaw/vendor/mona-tools/bin/wacrawl"
 test -f "${HOME_DIR}/.monoclaw/skills/gmail-assistant/SKILL.md"
 test -f "${HOME_DIR}/.monoclaw/plugins/mona-secretary-tools/plugin.yaml"
 grep -q "Mona secretary tools installed" "${TMP}/apply-tools.out"
-grep -Fq "mona-secretary-tools" "${HOME_DIR}/.monoclaw/config.yaml"
-grep -Fq "enabled:" "${HOME_DIR}/.monoclaw/config.yaml"
+test ! -f "${HOME_DIR}/.monoclaw/config.yaml"
 
 printf 'existing skill\n' > "${HOME_DIR}/.monoclaw/skills/gmail-assistant/SKILL.md"
 printf 'existing plugin\n' > "${HOME_DIR}/.monoclaw/plugins/mona-secretary-tools/plugin.yaml"
@@ -137,7 +140,6 @@ plugins:
 EOF
 PATH="/usr/bin:/bin:/usr/sbin:/sbin" HOME="${DISABLE_HOME}" \
   bash "${ROOT}/bin/hatch" --apply --tools-pack-root "${PACK}" install-tools | tee "${TMP}/install-tools-disabled.out"
-grep -q "plugins.disabled lists mona-secretary-tools" "${TMP}/install-tools-disabled.out"
 grep -Fq "disabled:" "${DISABLE_HOME}/.monoclaw/config.yaml"
 test "$(grep -c "mona-secretary-tools" "${DISABLE_HOME}/.monoclaw/config.yaml" || true)" -eq 1
 

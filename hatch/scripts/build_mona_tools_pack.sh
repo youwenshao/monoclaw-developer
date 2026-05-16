@@ -114,12 +114,24 @@ def pack_destination(relative: str) -> Path:
         raise SystemExit(f"Mona tools destination escapes pack root: {relative}") from None
     return destination
 
+def ensure_tree_symlinks_inside(tree: Path, root: Path, label: str) -> None:
+    for path in tree.rglob("*"):
+        if not path.is_symlink():
+            continue
+        resolved = path.resolve(strict=False)
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            raise SystemExit(f"{label} symlink escapes expected root: {path}") from None
+
 def copy_path(source: Path, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     if source.is_dir():
+        ensure_tree_symlinks_inside(source, input_root, "Mona tools source")
         if destination.exists():
             shutil.rmtree(destination)
         shutil.copytree(source, destination, symlinks=True)
+        ensure_tree_symlinks_inside(destination, pack_root, "Mona tools destination")
     else:
         shutil.copy2(source, destination)
 
@@ -211,6 +223,7 @@ for item in data.get("extra_artifacts", []):
     + "\n",
     encoding="utf-8",
 )
+ensure_tree_symlinks_inside(pack_root, pack_root, "Mona tools pack")
 PY
 
 PACK_ID="$(python3 - "${PACK_ROOT}/.mona-tools-active.json" <<'PY'

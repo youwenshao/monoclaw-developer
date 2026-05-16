@@ -28,6 +28,13 @@ def is_ignored_metadata(path: Path, root: Path) -> bool:
     )
 
 
+def ensure_inside(path: Path, root: Path, message: str) -> None:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        raise SystemExit(message) from None
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-pack-root", required=True)
@@ -41,7 +48,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     root = Path(args.model_pack_root).resolve()
-    model_path = (root / args.model_file).resolve()
+    raw_model_path = root / args.model_file
+    model_path = raw_model_path.resolve(strict=False)
     if root != model_path and root not in model_path.parents:
         raise SystemExit(f"model file escapes pack root: {args.model_file}")
     if is_ignored_metadata(model_path, root):

@@ -8,6 +8,8 @@ if [[ "${HATCH_INSTALL_DRY_RUN:-0}" == "1" ]]; then
   MODE="--dry-run"
 fi
 
+printf '  info: MonoClaw Hatch install from bundle root: %s\n' "${DIST_ROOT}" >&2
+
 bash "${DIST_ROOT}/bin/hatch" "${MODE}" --bundle-root "${DIST_ROOT}" install
 
 if [[ "${HATCH_INSTALL_MONA_TOOLS:-1}" != "1" ]]; then

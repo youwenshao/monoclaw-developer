@@ -32,18 +32,53 @@ Run the production assembler from the Hatch source directory:
 
 ```bash
 cd /Users/admin/Projects/hatch
+bash scripts/stage_vendor_python_macos.sh
 bash scripts/build_wheelhouse.sh
 ./build.sh
 ```
+
+The assembler writes the customer `dist/` tree to a **temporary staging directory**
+under `${TMPDIR:-/tmp}` and **atomically moves** it into `HATCH_DIST_ROOT` (default
+`./dist`) only after `hatch-manifest.json` exists and `prepare-bundle` passes. If
+assembly fails earlier, any previous successful `dist/` is left in place (when it
+already existed) so copied pendrives do not pick up a partial directory that is
+missing `hatch-manifest.json`.
+
+Optional **Mona secretary** and **skill-deps** pack steps are **strict by default**
+(`HATCH_OPTIONAL_PACKS_STRICT=1`): failures abort `./build.sh` so release bundles
+do not silently omit those sidecars. For local debugging only, set
+`HATCH_OPTIONAL_PACKS_STRICT=0` to emit a core bundle (manifest + `prepare-bundle`)
+even when an optional pack fails; CI and release builds should keep strict mode.
+
+If skill-deps wheels target a newer Python than `bundle-inputs/vendor/python/current`,
+strict assembly fails until the bundled interpreter or the skill-deps lock is
+updated—do not confuse that failure with an incomplete `dist/` swap.
+
+Secretary bundles ship **`memo`**, which upstream declares **`requires-python >= 3.13`**.
+Stage **`bundle-inputs/vendor/python/current`** accordingly on macOS with:
+
+```bash
+bash scripts/stage_vendor_python_macos.sh
+bash scripts/build_wheelhouse.sh   # use HATCH_CLEAN_WHEELHOUSE=1 after Python bumps
+HATCH_SKILL_DEPS_FORCE=1 bash scripts/prepare_skill_deps_inputs.sh
+```
+
+Then `./build.sh`. On Intel Macs, run the staging script **on x86_64 hardware** or set
+`HATCH_VENDOR_PYTHON_URL` to the matching `x86_64-apple-darwin-install_only.tar.gz`
+from the same [astral-sh/python-build-standalone](https://github.com/astral-sh/python-build-standalone/releases) release tag.
 
 The assembler expects the runtime checkout at `../monoclaw-runtime` and non-git
 inputs under `/Users/admin/Projects/hatch/bundle-inputs/`. Required production
 inputs are `bundle-inputs/vendor/python/current/bin/python3` and a populated
 `bundle-inputs/vendor/wheelhouse/` for the `local-office` runtime dependency
-profile. Optional vendor trees such as `support`, `browser`, `skills`, and
-`launchd` are copied when present and represented in the generated manifest.
-When `bundle-inputs/vendor/skills` is absent, the assembler stages the bundled
-runtime skills from `../monoclaw-runtime/skills`.
+profile. Optional vendor trees such as `support`, `browser`, `skills`,
+`optional-skills`, and `launchd` are copied when present and represented in the
+generated manifest. When `bundle-inputs/vendor/skills` is absent, the assembler
+stages the bundled runtime skills from `../monoclaw-runtime/skills` as the
+default active skill library. When `bundle-inputs/vendor/optional-skills` is
+absent, it stages `../monoclaw-runtime/optional-skills` as the offline official
+Skills Hub catalog. The assembler verifies both trees against the runtime
+checkout before writing `hatch-manifest.json`.
 
 If `bundle-inputs/vendor/models/gemma-4-e4b/gemma-4-e4b.gguf` exists, the
 assembler creates an optional sibling sidecar at
@@ -58,20 +93,30 @@ tools pack is not part of `dist/hatch-manifest.json`; it ships its own
 `dist/install-mona-tools.sh` (invoked from `dist/install.sh`). Copy `tool-packs/`
 to the provisioning medium next to `dist/`, the same way optional model packs are
 copied. Omit the directory only when you disabled Mona at build time or plan to
-skip install-time Mona with `HATCH_INSTALL_MONA_TOOLS=0` on the target.
+skip install-time Mona with `HATCH_INSTALL_MONA_TOOLS=0` on the target. After
+install, run `monoclaw setup system` on the target Mac to review Mona
+permissions, activate the plugin/toolset, and merge MCP templates only after
+path and tool-scope review.
 
 A second sidecar slot is reserved for **skill-deps-pack** at
 `tool-packs/skill-deps-pack/`. It is the per-skill counterpart to Mona
-and exists for small CLI dependencies that move individual MonoClaw
-skills from `external_runtime_only` to `provisioned_user_config_required`
-in their `metadata.monoclaw.provisioning` block. The pack is **disabled
-by default** (`HATCH_INCLUDE_SKILL_DEPS=1` to enable). When enabled and
-populated, it follows the same shape as the Mona pack:
-`bundle-inputs/vendor/skill-deps/tool-lock.json` drives the build, the
-output sits beside `dist/`, the install post-step is
-`dist/install-skill-deps.sh`, and `HATCH_INSTALL_SKILL_DEPS=0` skips the
-post-step on the target. See `bundle-inputs/vendor/skill-deps/README.md`
-for the contract and the per-binary PR checklist.
+and ships small CLI dependencies that move individual MonoClaw skills from
+`external_runtime_only` to `provisioned_user_config_required` in their
+`metadata.monoclaw.provisioning` block. The secretary bundle declares
+`remindctl`, `memo`, `imsg`, and `himalaya`. Release assembly uses
+`bundle-inputs/vendor/skill-deps/source-lock.json` to download/build ignored
+`prebuilt/` artifacts and generate `tool-lock.json` with concrete SHA-256s
+before strict pack verification. Python-backed tools such as `memo` ship an
+offline wheelhouse plus `package-spec.json`, not a pre-baked virtualenv; Hatch
+creates their venv on the target with the bundled
+`~/.monoclaw/vendor/python/current/bin/python3` and writes the
+`~/.monoclaw/vendor/skill-deps/bin/<tool>` shim during
+`dist/install-skill-deps.sh`. The output sits beside `dist/`, the install
+post-step is `dist/install-skill-deps.sh`, and `HATCH_INSTALL_SKILL_DEPS=0`
+skips the post-step on the target. After install, run `monoclaw setup system` to
+verify the binaries, authorize macOS app access, and collect Himalaya secrets.
+See `bundle-inputs/vendor/skill-deps/README.md` for the contract and refresh
+controls.
 
 `scripts/build_wheelhouse.sh` is the canonical helper for populating
 `bundle-inputs/vendor/wheelhouse/` on the assembly machine. It builds/downloads
@@ -120,6 +165,7 @@ dist/
     browser/
       chromium/
     skills/
+    optional-skills/
     wheelhouse/
       *.whl
     launchd/

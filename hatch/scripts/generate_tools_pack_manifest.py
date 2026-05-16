@@ -34,22 +34,36 @@ def is_ignored_metadata(path: Path, root: Path) -> bool:
     )
 
 
+def ensure_inside(path: Path, root: Path, message: str) -> None:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        raise SystemExit(message) from None
+
+
+def checked_pack_path(path: Path, root: Path, label: str) -> Path:
+    resolved = path.resolve(strict=False)
+    ensure_inside(resolved, root, f"{label} escapes pack root: {relative_path(path, root)}")
+    return resolved
+
+
 def collect_artifacts(root: Path) -> list[dict[str, object]]:
     artifacts: list[dict[str, object]] = []
     for path in sorted(root.rglob("*")):
-        if not path.is_file():
-            continue
         if is_ignored_metadata(path, root):
             continue
         rel = relative_path(path, root)
         if rel == "tools-pack-manifest.json":
             continue
+        checked = checked_pack_path(path, root, "tool artifact")
+        if not checked.is_file():
+            continue
         artifacts.append(
             {
                 "path": rel,
                 "kind": "file",
-                "sha256": sha256(path),
-                "bytes": path.stat().st_size,
+                "sha256": sha256(checked),
+                "bytes": checked.stat().st_size,
             }
         )
     return artifacts
@@ -64,7 +78,8 @@ def parse_tool(value: str, root: Path) -> dict[str, object]:
     name, version, rel_path, activation, permissions = [part.strip() for part in parts]
     if not name or not version or not rel_path or not activation:
         raise SystemExit("--tool fields must be non-empty")
-    path = (root / rel_path).resolve()
+    raw_path = root / rel_path
+    path = raw_path.resolve(strict=False)
     if path != root and root not in path.parents:
         raise SystemExit(f"tool artifact escapes pack root: {rel_path}")
     if is_ignored_metadata(path, root):
@@ -91,6 +106,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pack-version", required=True)
     parser.add_argument("--target-arch", required=True)
     parser.add_argument("--node-version", default="")
+    parser.add_argument("--node-path", default="node/current/bin/node")
     parser.add_argument("--tool", action="append", default=[])
     return parser.parse_args()
 
@@ -100,12 +116,15 @@ def main() -> None:
     root = Path(args.tools_pack_root).resolve()
     if not root.is_dir():
         raise SystemExit(f"tools pack root missing: {root}")
-    node_path = root / "node/current/bin/node"
-    if not node_path.is_file():
-        raise SystemExit(f"tools pack node runtime missing: {node_path.relative_to(root).as_posix()}")
-    if not os.access(node_path, os.X_OK):
-        raise SystemExit(f"tools pack node runtime is not executable: {node_path.relative_to(root).as_posix()}")
+
+    runtime: dict[str, object] = {}
     if args.node_version:
+        node_rel_path = args.node_path.strip() or "node/current/bin/node"
+        node_path = root / node_rel_path
+        if not node_path.is_file():
+            raise SystemExit(f"tools pack node runtime missing: {node_path.relative_to(root).as_posix()}")
+        if not os.access(node_path, os.X_OK):
+            raise SystemExit(f"tools pack node runtime is not executable: {node_path.relative_to(root).as_posix()}")
         try:
             version = subprocess.check_output([str(node_path), "--version"], text=True, timeout=10).strip()
         except (OSError, subprocess.SubprocessError) as exc:
@@ -114,6 +133,10 @@ def main() -> None:
             raise SystemExit(
                 f"tools pack node runtime version mismatch: expected v{args.node_version}, got {version}"
             )
+        runtime["node"] = {
+            "version": args.node_version,
+            "path": node_rel_path,
+        }
 
     tools = [parse_tool(tool, root) for tool in args.tool]
     manifest = {
@@ -127,12 +150,7 @@ def main() -> None:
             "platform": "darwin",
             "arch": args.target_arch,
         },
-        "runtime": {
-            "node": {
-                "version": args.node_version,
-                "path": "node/current/bin/node",
-            }
-        },
+        "runtime": runtime,
         "tools": tools,
         "artifacts": collect_artifacts(root),
     }

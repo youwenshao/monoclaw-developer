@@ -24,6 +24,11 @@ log() {
   printf '[hatch-build] %s\n' "$1"
 }
 
+log_step() {
+  _HATCH_BUILD_PHASE="$1"
+  printf '[hatch-build] step: %s\n' "$1"
+}
+
 die() {
   printf '[hatch-build] fail: %s\n' "$1" >&2
   exit 1
@@ -233,24 +238,79 @@ stage_mona_tools_pack() {
     return
   fi
 
-  HATCH_INPUT_ROOT="${HATCH_INPUT_ROOT}" \
-  HATCH_TOOLS_PACKS_ROOT="${HATCH_TOOLS_PACKS_ROOT}" \
-  HATCH_TARGET_ARCH="${HATCH_TARGET_ARCH}" \
-    bash "${HATCH_ROOT}/scripts/build_mona_tools_pack.sh"
+  if [[ "${HATCH_TEST_FORCE_MONA_PACK_FAIL:-0}" == "1" ]]; then
+    printf '[hatch-build] test hook: HATCH_TEST_FORCE_MONA_PACK_FAIL simulated failure\n' >&2
+    if [[ "${HATCH_OPTIONAL_PACKS_STRICT:-1}" == "1" ]]; then
+      printf '[hatch-build] fail: Mona tools pack step aborted (HATCH_OPTIONAL_PACKS_STRICT=1); see test hook message above.\n' >&2
+      return 1
+    fi
+    log "warn: Mona secretary tools pack failed; continuing without Mona pack (HATCH_OPTIONAL_PACKS_STRICT=0)"
+    rm -rf "${HATCH_TOOLS_PACKS_ROOT}/mona-secretary-tools"
+    return 0
+  fi
+
+  if ! HATCH_INPUT_ROOT="${HATCH_INPUT_ROOT}" \
+    HATCH_TOOLS_PACKS_ROOT="${HATCH_TOOLS_PACKS_ROOT}" \
+    HATCH_TARGET_ARCH="${HATCH_TARGET_ARCH}" \
+      bash "${HATCH_ROOT}/scripts/build_mona_tools_pack.sh"; then
+    if [[ "${HATCH_OPTIONAL_PACKS_STRICT:-1}" == "1" ]]; then
+      printf '[hatch-build] fail: Mona secretary tools pack build failed under HATCH_OPTIONAL_PACKS_STRICT=1 (see script output above).\n' >&2
+      return 1
+    fi
+    log "warn: Mona secretary tools pack failed; continuing without Mona pack (HATCH_OPTIONAL_PACKS_STRICT=0)"
+    rm -rf "${HATCH_TOOLS_PACKS_ROOT}/mona-secretary-tools"
+    return 0
+  fi
 }
 
 stage_skill_deps_pack() {
   # Phase 5 scaffolding for the skill readiness uplift program.
-  # OFF by default; even when ON the underlying script is a no-op until
+  # ON by default (`HATCH_INCLUDE_SKILL_DEPS=0` or `HATCH_INCLUDE_SKILLS_DEPS=0` to skip).
+  # Even when ON the underlying script is a no-op until
   # `bundle-inputs/vendor/skill-deps/tool-lock.json` is populated.
-  if [[ "${HATCH_INCLUDE_SKILL_DEPS:-0}" != "1" ]]; then
+  local _hatch_skill_deps_include
+  _hatch_skill_deps_include="${HATCH_INCLUDE_SKILL_DEPS:-${HATCH_INCLUDE_SKILLS_DEPS:-1}}"
+  if [[ "${_hatch_skill_deps_include}" != "1" ]]; then
     return
   fi
 
-  HATCH_INPUT_ROOT="${HATCH_INPUT_ROOT}" \
-  HATCH_TOOLS_PACKS_ROOT="${HATCH_TOOLS_PACKS_ROOT}" \
-  HATCH_TARGET_ARCH="${HATCH_TARGET_ARCH}" \
-    bash "${HATCH_ROOT}/scripts/build_skill_deps_pack.sh"
+  if [[ "${HATCH_TEST_FORCE_SKILL_DEPS_PACK_FAIL:-0}" == "1" ]]; then
+    printf '[hatch-build] test hook: HATCH_TEST_FORCE_SKILL_DEPS_PACK_FAIL simulated failure\n' >&2
+    if [[ "${HATCH_OPTIONAL_PACKS_STRICT:-1}" == "1" ]]; then
+      printf '[hatch-build] fail: skill-deps pack step aborted (HATCH_OPTIONAL_PACKS_STRICT=1); see test hook message above.\n' >&2
+      return 1
+    fi
+    log "warn: skill-deps pack failed; continuing without skill-deps pack (HATCH_OPTIONAL_PACKS_STRICT=0)"
+    rm -rf "${HATCH_TOOLS_PACKS_ROOT}/skill-deps-pack"
+    return 0
+  fi
+
+  if ! HATCH_INPUT_ROOT="${HATCH_INPUT_ROOT}" \
+    HATCH_TOOLS_PACKS_ROOT="${HATCH_TOOLS_PACKS_ROOT}" \
+    HATCH_RUNTIME_ROOT="${HATCH_RUNTIME_ROOT}" \
+    HATCH_TARGET_ARCH="${HATCH_TARGET_ARCH}" \
+      bash "${HATCH_ROOT}/scripts/build_skill_deps_pack.sh"; then
+    if [[ "${HATCH_OPTIONAL_PACKS_STRICT:-1}" == "1" ]]; then
+      printf '[hatch-build] fail: skill-deps pack build failed under HATCH_OPTIONAL_PACKS_STRICT=1 (see script output above, e.g. bundled Python vs wheelhouse min_python).\n' >&2
+      return 1
+    fi
+    log "warn: skill-deps pack failed; continuing without skill-deps pack (HATCH_OPTIONAL_PACKS_STRICT=0)"
+    rm -rf "${HATCH_TOOLS_PACKS_ROOT}/skill-deps-pack"
+    return 0
+  fi
+}
+
+stage_skill_deps_installer() {
+  local _hatch_skill_deps_include
+  local pack_root
+  _hatch_skill_deps_include="${HATCH_INCLUDE_SKILL_DEPS:-${HATCH_INCLUDE_SKILLS_DEPS:-1}}"
+  pack_root="${HATCH_TOOLS_PACKS_ROOT}/skill-deps-pack"
+  if [[ "${_hatch_skill_deps_include}" != "1" || ! -d "${pack_root}" ]]; then
+    return
+  fi
+
+  cp "${HATCH_ROOT}/templates/install-skill-deps.sh" "${HATCH_DIST_ROOT}/install-skill-deps.sh"
+  chmod +x "${HATCH_DIST_ROOT}/install-skill-deps.sh"
 }
 
 stage_runtime_skills() {
@@ -266,6 +326,34 @@ stage_runtime_skills() {
   fi
 }
 
+stage_runtime_optional_skills() {
+  if [[ -d "${HATCH_DIST_ROOT}/vendor/optional-skills" ]]; then
+    log "Using curated vendor/optional-skills from bundle inputs"
+    return
+  fi
+
+  if [[ -d "${HATCH_RUNTIME_ROOT}/optional-skills" ]]; then
+    log "Staging runtime optional skills catalog"
+    mkdir -p "${HATCH_DIST_ROOT}/vendor"
+    cp -R "${HATCH_RUNTIME_ROOT}/optional-skills" "${HATCH_DIST_ROOT}/vendor/optional-skills"
+  fi
+}
+
+verify_skill_bundle() {
+  python3 "${HATCH_ROOT}/scripts/verify_skill_bundle.py" \
+    --runtime-root "${HATCH_RUNTIME_ROOT}" \
+    --bundle-root "${HATCH_DIST_ROOT}"
+}
+
+_hatch_build_test_fail_maybe() {
+  local marker="$1"
+  if [[ "${HATCH_TEST_FAIL_AFTER_STEP:-}" != "${marker}" ]]; then
+    return 0
+  fi
+  printf '[hatch-build] test hook: HATCH_TEST_FAIL_AFTER_STEP=%s\n' "${marker}" >&2
+  return 1
+}
+
 stage_bundle() {
   require_dir "${HATCH_INPUT_ROOT}" "bundle input directory is missing"
   require_dir "${HATCH_RUNTIME_ROOT}" "runtime checkout is missing"
@@ -276,20 +364,52 @@ stage_bundle() {
   verify_provisioning_lock
   validate_dist_root
 
-  rm -rf "${HATCH_DIST_ROOT}"
-  mkdir -p "${HATCH_DIST_ROOT}/bin" "${HATCH_DIST_ROOT}/lib" "${HATCH_DIST_ROOT}/runtime" "${HATCH_DIST_ROOT}/tests"
+  local final_dist="${HATCH_DIST_ROOT}"
+  local staging
+  staging="$(mktemp -d "${TMPDIR:-/tmp}/hatch-dist-staging.XXXXXX")"
 
+  _hatch_stage_bundle_cleanup_err() {
+    local status=$?
+    local cmd="${BASH_COMMAND:-?}"
+    printf '[hatch-build] fail: exit %s' "${status}" >&2
+    if [[ -n "${_HATCH_BUILD_PHASE:-}" ]]; then
+      printf ' (phase: %s)' "${_HATCH_BUILD_PHASE}" >&2
+    fi
+    printf '\n' >&2
+    case "${cmd}" in
+      return | return\ *)
+        printf '[hatch-build] hint: details are usually on the lines above (sub-script or strict optional-pack check).\n' >&2
+        printf '[hatch-build] hint: for optional Mona/skill-deps only, try HATCH_OPTIONAL_PACKS_STRICT=0 while debugging.\n' >&2
+        ;;
+      *)
+        printf '[hatch-build] fail: failing command: %s\n' "${cmd}" >&2
+        ;;
+    esac
+    rm -rf "${staging}"
+    exit "${status}"
+  }
+  trap '_hatch_stage_bundle_cleanup_err' ERR
+
+  HATCH_DIST_ROOT="${staging}"
+
+  log_step "prepare staging directory"
+  mkdir -p "${HATCH_DIST_ROOT}/bin" "${HATCH_DIST_ROOT}/lib" "${HATCH_DIST_ROOT}/runtime" "${HATCH_DIST_ROOT}/tests"
+  _hatch_build_test_fail_maybe after_mkdir
+
+  log_step "copy hatch templates and scripts into staging bundle"
   cp "${HATCH_ROOT}/bin/hatch" "${HATCH_DIST_ROOT}/bin/hatch"
   cp "${HATCH_ROOT}/lib/common.sh" "${HATCH_DIST_ROOT}/lib/common.sh"
   cp "${HATCH_ROOT}/templates/install.sh" "${HATCH_DIST_ROOT}/install.sh"
   cp "${HATCH_ROOT}/templates/install-gemma-model.sh" "${HATCH_DIST_ROOT}/install-gemma-model.sh"
   cp "${HATCH_ROOT}/templates/install-mona-tools.sh" "${HATCH_DIST_ROOT}/install-mona-tools.sh"
-  cp "${HATCH_ROOT}/templates/install-skill-deps.sh" "${HATCH_DIST_ROOT}/install-skill-deps.sh"
   cp "${HATCH_ROOT}/tests/hatch_dry_run_tests.sh" "${HATCH_DIST_ROOT}/tests/run-hatch-dry-run.sh"
-  chmod +x "${HATCH_DIST_ROOT}/bin/hatch" "${HATCH_DIST_ROOT}/install.sh" "${HATCH_DIST_ROOT}/install-gemma-model.sh" "${HATCH_DIST_ROOT}/install-mona-tools.sh" "${HATCH_DIST_ROOT}/install-skill-deps.sh" "${HATCH_DIST_ROOT}/tests/run-hatch-dry-run.sh"
+  chmod +x "${HATCH_DIST_ROOT}/bin/hatch" "${HATCH_DIST_ROOT}/install.sh" "${HATCH_DIST_ROOT}/install-gemma-model.sh" "${HATCH_DIST_ROOT}/install-mona-tools.sh" "${HATCH_DIST_ROOT}/tests/run-hatch-dry-run.sh"
+  _hatch_build_test_fail_maybe after_templates
 
+  log_step "build runtime web assets and wheel"
   build_runtime_web_assets
   build_runtime_wheel "${HATCH_DIST_ROOT}/runtime"
+  _hatch_build_test_fail_maybe after_wheel
 
   local version
   version="$(runtime_version)"
@@ -308,14 +428,28 @@ EOF
 #   python -m pip install "./monoclaw_runtime-<version>-py3-none-any.whl[local-office]"
 EOF
 
-  for asset in python support browser skills launchd wheelhouse provisioning; do
+  log_step "stage vendor assets"
+  for asset in python support browser skills optional-skills launchd wheelhouse provisioning; do
     copy_optional_vendor_asset "${asset}"
   done
+  _hatch_build_test_fail_maybe after_vendor
+
+  log_step "stage runtime skills catalogs"
   stage_runtime_skills
+  stage_runtime_optional_skills
+
+  log_step "verify staged skill bundle against runtime checkout"
+  verify_skill_bundle
+  _hatch_build_test_fail_maybe after_skill_verify
+
+  log_step "stage optional model pack and tool packs"
   stage_model_packs
   stage_mona_tools_pack
   stage_skill_deps_pack
+  stage_skill_deps_installer
+  _hatch_build_test_fail_maybe after_optional_packs
 
+  log_step "generate hatch-manifest.json"
   python3 "${HATCH_ROOT}/scripts/generate_manifest.py" \
     --bundle-root "${HATCH_DIST_ROOT}" \
     --bundle-id "${HATCH_BUNDLE_ID:-monoclaw-hatch-${version}-${HATCH_TARGET_ARCH}}" \
@@ -323,9 +457,19 @@ EOF
     --runtime-version "${version}" \
     --target-arch "${HATCH_TARGET_ARCH}" \
     --minimum-macos "${HATCH_MINIMUM_MACOS}"
+  _hatch_build_test_fail_maybe after_manifest
 
-  log "Verifying prepared bundle"
+  log_step "verify prepared bundle (prepare-bundle dry-run)"
   bash "${HATCH_DIST_ROOT}/bin/hatch" --dry-run --bundle-root "${HATCH_DIST_ROOT}" prepare-bundle
+
+  trap - ERR
+
+  log_step "publish bundle directory (atomic swap)"
+  rm -rf "${final_dist}"
+  mv "${staging}" "${final_dist}"
+  HATCH_DIST_ROOT="${final_dist}"
+
+  log "Published Hatch bundle at ${final_dist}"
 }
 
 stage_bundle

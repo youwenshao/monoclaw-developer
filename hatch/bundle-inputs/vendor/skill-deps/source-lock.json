@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "pack": {
+    "id": "skill-deps-pack",
+    "version": "0.1.0"
+  },
+  "tools": [
+    {
+      "name": "remindctl",
+      "version": "0.1.1",
+      "license": "MIT",
+      "repository": "https://github.com/steipete/remindctl",
+      "source_ref": "v0.1.1",
+      "activation": "opt-in",
+      "required_permissions": [
+        "reminders"
+      ],
+      "source": "prebuilt/bin/remindctl",
+      "path": "bin/remindctl",
+      "methods": [
+        {
+          "type": "github_release_asset",
+          "owner": "steipete",
+          "repo": "remindctl",
+          "tag": "v0.1.1",
+          "asset_patterns": {
+            "darwin-arm64": [
+              "remindctl.*darwin.*arm64.*",
+              "remindctl.*macos.*arm64.*",
+              "remindctl.*aarch64.*darwin.*"
+            ],
+            "darwin-x86_64": [
+              "remindctl.*darwin.*x86_64.*",
+              "remindctl.*macos.*x86_64.*",
+              "remindctl.*x86_64.*darwin.*"
+            ]
+          },
+          "binary": "remindctl"
+        },
+        {
+          "type": "swift_build",
+          "repository": "https://github.com/steipete/remindctl.git",
+          "ref": "v0.1.1",
+          "product": "remindctl"
+        }
+      ]
+    },
+    {
+      "name": "memo",
+      "version": "0.5.3",
+      "license": "Apache-2.0",
+      "repository": "https://github.com/antoniorodr/memo",
+      "source_ref": "v0.5.3",
+      "activation": "opt-in",
+      "required_permissions": [
+        "notes"
+      ],
+      "source": "prebuilt/python/memo/.install-marker",
+      "path": "python/memo/.install-marker",
+      "methods": [
+        {
+          "type": "python_wheelhouse",
+          "package": "git+https://github.com/antoniorodr/memo.git@v0.5.3",
+          "entrypoint": "memo",
+          "min_python": "3.13",
+          "support_source": "prebuilt/python/memo",
+          "support_path": "python/memo"
+        }
+      ]
+    },
+    {
+      "name": "imsg",
+      "version": "0.5.0",
+      "license": "MIT",
+      "repository": "https://github.com/steipete/imsg",
+      "source_ref": "v0.5.0",
+      "activation": "opt-in",
+      "required_permissions": [
+        "messages",
+        "full-disk-access"
+      ],
+      "source": "prebuilt/bin/imsg",
+      "path": "bin/imsg",
+      "methods": [
+        {
+          "type": "github_release_asset",
+          "owner": "steipete",
+          "repo": "imsg",
+          "tag": "v0.5.0",
+          "asset_patterns": {
+            "darwin-arm64": [
+              "imsg.*darwin.*arm64.*",
+              "imsg.*macos.*arm64.*",
+              "imsg.*aarch64.*darwin.*"
+            ],
+            "darwin-x86_64": [
+              "imsg.*darwin.*x86_64.*",
+              "imsg.*macos.*x86_64.*",
+              "imsg.*x86_64.*darwin.*"
+            ]
+          },
+          "binary": "imsg"
+        },
+        {
+          "type": "swift_build",
+          "repository": "https://github.com/steipete/imsg.git",
+          "ref": "v0.5.0",
+          "product": "imsg"
+        }
+      ]
+    },
+    {
+      "name": "himalaya",
+      "version": "1.2.0",
+      "license": "MIT",
+      "repository": "https://github.com/pimalaya/himalaya",
+      "source_ref": "v1.2.0",
+      "activation": "opt-in",
+      "required_permissions": [
+        "network",
+        "email-credentials"
+      ],
+      "source": "prebuilt/bin/himalaya",
+      "path": "bin/himalaya",
+      "methods": [
+        {
+          "type": "download_archive",
+          "urls": {
+            "darwin-arm64": "https://github.com/pimalaya/himalaya/releases/download/v1.2.0/himalaya.aarch64-darwin.tgz",
+            "darwin-x86_64": "https://github.com/pimalaya/himalaya/releases/download/v1.2.0/himalaya.x86_64-darwin.tgz",
+            "linux-x86_64": "https://github.com/pimalaya/himalaya/releases/download/v1.2.0/himalaya.x86_64-linux.tgz"
+          },
+          "binary": "himalaya"
+        }
+      ]
+    }
+  ]
+}

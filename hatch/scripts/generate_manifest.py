@@ -32,22 +32,36 @@ def is_ignored_metadata(path: Path, root: Path) -> bool:
     )
 
 
+def ensure_inside(path: Path, root: Path, message: str) -> None:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        raise SystemExit(message) from None
+
+
+def checked_bundle_path(path: Path, root: Path) -> Path:
+    resolved = path.resolve(strict=False)
+    ensure_inside(resolved, root, f"bundle artifact escapes bundle root: {relative_path(path, root)}")
+    return resolved
+
+
 def collect_artifacts(root: Path) -> list[dict[str, object]]:
     artifacts: list[dict[str, object]] = []
     for path in sorted(root.rglob("*")):
-        if not path.is_file():
-            continue
         if is_ignored_metadata(path, root):
             continue
         rel = relative_path(path, root)
         if rel == "hatch-manifest.json":
             continue
+        checked = checked_bundle_path(path, root)
+        if not checked.is_file():
+            continue
         artifacts.append(
             {
                 "path": rel,
                 "kind": "file",
-                "sha256": sha256(path),
-                "bytes": path.stat().st_size,
+                "sha256": sha256(checked),
+                "bytes": checked.stat().st_size,
             }
         )
     return artifacts

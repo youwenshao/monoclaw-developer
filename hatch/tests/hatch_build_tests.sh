@@ -19,6 +19,7 @@ mkdir -p \
   "${INPUTS}/vendor/wheelhouse" \
   "${RUNTIME}" \
   "${RUNTIME}/skills/customer-office" \
+  "${RUNTIME}/optional-skills/research/deep-research" \
   "${HOME_DIR}"
 
 printf 'Gemma 4 E4B GGUF placeholder\n' > "${INPUTS}/vendor/models/gemma-4-e4b/gemma-4-e4b.gguf"
@@ -38,6 +39,7 @@ cat > "${INPUTS}/vendor/provisioning/monoclaw-provisioning-lock.json" <<'JSON'
 }
 JSON
 printf 'runtime skill placeholder\n' > "${RUNTIME}/skills/customer-office/SKILL.md"
+printf 'optional skill placeholder\n' > "${RUNTIME}/optional-skills/research/deep-research/SKILL.md"
 printf 'wheel placeholder\n' > "${WHEEL}"
 cat > "${FAKE_PYTHON}" <<'SH'
 #!/usr/bin/env sh
@@ -164,6 +166,7 @@ test -x "${DIST}/vendor/python/current/bin/python3"
 test -f "${DIST}/vendor/provisioning/monoclaw-provisioning-lock.json"
 test -f "${DIST}/vendor/wheelhouse/dependency-0.0.0-py3-none-any.whl"
 test -f "${DIST}/vendor/skills/customer-office/SKILL.md"
+test -f "${DIST}/vendor/optional-skills/research/deep-research/SKILL.md"
 test ! -d "${DIST}/vendor/models"
 test -f "${TMP}/model-packs/gemma-4-e4b/gemma-4-e4b.gguf"
 test -f "${TMP}/model-packs/gemma-4-e4b/model-pack-manifest.json"
@@ -171,6 +174,7 @@ test -f "${TMP}/tool-packs/mona-secretary-tools/tools-pack-manifest.json"
 test -x "${TMP}/tool-packs/mona-secretary-tools/bin/wacrawl"
 test -x "${TMP}/tool-packs/mona-secretary-tools/bin/macos-automator-mcp"
 test -x "${DIST}/install-gemma-model.sh"
+test ! -e "${DIST}/install-skill-deps.sh"
 test -f "${DIST}/hatch-manifest.json"
 python3 - "${DIST}/hatch-manifest.json" <<'PY'
 import json
@@ -183,6 +187,16 @@ assert capabilities["provisioned_tools"] == 1
 assert capabilities["provisioned_skills"] == 0
 PY
 grep -q "Manifest verified for bundle" "${TMP}/build.out"
+grep -q "Official skill bundle verified: 1 default + 1 optional = 2" "${TMP}/build.out"
+
+MISSING_OPTIONAL_DIST="${TMP}/dist-missing-optional"
+cp -R "${DIST}" "${MISSING_OPTIONAL_DIST}"
+rm -rf "${MISSING_OPTIONAL_DIST}/vendor/optional-skills"
+if python3 "${ROOT}/scripts/verify_skill_bundle.py" --runtime-root "${RUNTIME}" --bundle-root "${MISSING_OPTIONAL_DIST}" >"${TMP}/missing-optional.out" 2>&1; then
+  printf 'expected skill bundle verification to fail when optional skills are missing\n' >&2
+  exit 1
+fi
+grep -q "staged optional skills count 0 does not match runtime optional skills count 1" "${TMP}/missing-optional.out"
 
 bash "${DIST}/bin/hatch" --dry-run --bundle-root "${DIST}" prepare-bundle | tee "${TMP}/prepare.out"
 grep -q "Manifest verified for bundle" "${TMP}/prepare.out"
@@ -215,6 +229,7 @@ grep -q "dry-run: mkdir -p ${HOME_DIR}/.monoclaw/vendor" "${TMP}/install.out"
 grep -q "dry-run: cp ${DIST}/hatch-manifest.json ${HOME_DIR}/.monoclaw/vendor/hatch-manifest.json" "${TMP}/install.out"
 grep -q "dry-run: cp -R ${DIST}/vendor/wheelhouse ${HOME_DIR}/.monoclaw/vendor/wheelhouse" "${TMP}/install.out"
 grep -q "dry-run: cp -R ${DIST}/vendor/provisioning ${HOME_DIR}/.monoclaw/vendor/provisioning" "${TMP}/install.out"
+grep -q "dry-run: cp -R ${DIST}/vendor/optional-skills ${HOME_DIR}/.monoclaw/vendor/optional-skills" "${TMP}/install.out"
 grep -q "dry-run: install Homebrew with official installer" "${TMP}/install.out"
 grep -q "Using Python ${FAKE_PYTHON} (3.11.9) for runtime bootstrap" "${TMP}/install.out"
 grep -Fq "dry-run: ${HOME_DIR}/.monoclaw/vendor/runtime/venv/bin/python -m pip install --no-index --find-links ${HOME_DIR}/.monoclaw/vendor/wheelhouse --upgrade pip setuptools wheel" "${TMP}/install.out"
@@ -223,6 +238,10 @@ grep -q "dry-run: cp -R ${TMP}/tool-packs/mona-secretary-tools ${HOME_DIR}/.mono
 grep -q "dry-run: install Mona secretary skills into ${HOME_DIR}/.monoclaw/skills" "${TMP}/install.out"
 grep -q "dry-run: install Mona secretary plugins into ${HOME_DIR}/.monoclaw/plugins" "${TMP}/install.out"
 grep -q "manual: install LM Studio from the official .dmg if local inference is required" "${TMP}/install.out"
+if grep -q "Skill dependencies pack not found" "${TMP}/install.out"; then
+  printf 'install should not warn about a missing skill-deps pack when no pack was built\n' >&2
+  exit 1
+fi
 if grep -q "lmstudio.ai/install.sh" "${TMP}/install.out"; then
   printf 'install should not script LM Studio installation\n' >&2
   exit 1
@@ -287,6 +306,7 @@ HATCH_SKIP_RUNTIME_BUILD=1 \
 HATCH_SKIP_RUNTIME_PYTHON_SMOKE=1 \
   "${ROOT}/build.sh" | tee "${TMP}/core-build.out"
 test -f "${CORE_DIST}/hatch-manifest.json"
+test ! -e "${CORE_DIST}/install-skill-deps.sh"
 test ! -d "${CORE_DIST}/vendor/models"
 test ! -d "${TMP}/model-packs-core/gemma-4-e4b"
 
@@ -295,13 +315,22 @@ STANDALONE_HATCH="${PROJECTS}/hatch"
 STANDALONE_RUNTIME="${PROJECTS}/monoclaw-runtime"
 STANDALONE_DIST="${TMP}/standalone-dist"
 STANDALONE_WHEEL="${TMP}/monoclaw_runtime-0.1.0-py3-none-any.whl"
-mkdir -p "${PROJECTS}" "${STANDALONE_RUNTIME}" "${STANDALONE_HATCH}/bundle-inputs/vendor/models/gemma-4-e4b" "${STANDALONE_HATCH}/bundle-inputs/vendor/python/current/bin" "${STANDALONE_HATCH}/bundle-inputs/vendor/provisioning" "${STANDALONE_HATCH}/bundle-inputs/vendor/wheelhouse"
+mkdir -p \
+  "${PROJECTS}" \
+  "${STANDALONE_RUNTIME}/skills/customer-office" \
+  "${STANDALONE_RUNTIME}/optional-skills/research/deep-research" \
+  "${STANDALONE_HATCH}/bundle-inputs/vendor/models/gemma-4-e4b" \
+  "${STANDALONE_HATCH}/bundle-inputs/vendor/python/current/bin" \
+  "${STANDALONE_HATCH}/bundle-inputs/vendor/provisioning" \
+  "${STANDALONE_HATCH}/bundle-inputs/vendor/wheelhouse"
 cp -R "${ROOT}/." "${STANDALONE_HATCH}/"
 printf 'standalone Gemma placeholder\n' > "${STANDALONE_HATCH}/bundle-inputs/vendor/models/gemma-4-e4b/gemma-4-e4b.gguf"
 cp "${FAKE_PYTHON}" "${STANDALONE_HATCH}/bundle-inputs/vendor/python/current/bin/python3"
 cp "${INPUTS}/vendor/provisioning/monoclaw-provisioning-lock.json" "${STANDALONE_HATCH}/bundle-inputs/vendor/provisioning/monoclaw-provisioning-lock.json"
 printf 'standalone dependency wheel placeholder\n' > "${STANDALONE_HATCH}/bundle-inputs/vendor/wheelhouse/dependency-0.0.0-py3-none-any.whl"
 printf 'standalone wheel placeholder\n' > "${STANDALONE_WHEEL}"
+printf 'standalone skill placeholder\n' > "${STANDALONE_RUNTIME}/skills/customer-office/SKILL.md"
+printf 'standalone optional skill placeholder\n' > "${STANDALONE_RUNTIME}/optional-skills/research/deep-research/SKILL.md"
 cat > "${STANDALONE_RUNTIME}/pyproject.toml" <<'TOML'
 [project]
 name = "monoclaw-runtime"
@@ -311,6 +340,7 @@ TOML
 HATCH_RUNTIME_WHEEL="${STANDALONE_WHEEL}" \
 HATCH_DIST_ROOT="${STANDALONE_DIST}" \
 HATCH_INCLUDE_MONA_TOOLS=0 \
+HATCH_INCLUDE_SKILL_DEPS=0 \
 HATCH_SKIP_RUNTIME_BUILD=1 \
 HATCH_SKIP_RUNTIME_PYTHON_SMOKE=1 \
   "${STANDALONE_HATCH}/build.sh" | tee "${TMP}/standalone-build.out"

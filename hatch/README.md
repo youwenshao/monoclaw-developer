@@ -13,6 +13,7 @@ bundle from a provisioning medium on the target Mac.
 
 ```bash
 # Assembly machine, from /Users/admin/Projects/hatch.
+bash scripts/stage_vendor_python_macos.sh   # macOS — bundled Python >= 3.13 for memo skill-deps
 bash scripts/build_wheelhouse.sh
 ./build.sh
 
@@ -60,7 +61,8 @@ bundle-inputs/
         bin/python3
     support/       # optional
     browser/       # optional
-    skills/        # optional
+    skills/        # optional curated default-skill override
+    optional-skills/ # optional curated official Skills Hub catalog override
     wheelhouse/    # required for offline local-office deps
     launchd/       # optional
     models/        # optional model-pack inputs, not staged into core dist
@@ -72,8 +74,12 @@ The builder stages these files into `dist/`, builds the runtime dashboard assets
 and Python wheel from `../monoclaw-runtime`, writes `hatch-manifest.json` with
 artifact sizes and SHA-256 hashes, and verifies the bundle before returning. If
 no curated `bundle-inputs/vendor/skills` tree exists, the builder stages the
-runtime checkout's bundled `skills/` tree. Copy the resulting `dist/` directory
-to the provisioning pendrive. By default the builder also writes a sibling
+runtime checkout's bundled `skills/` tree as the default active skill library.
+If no curated `bundle-inputs/vendor/optional-skills` tree exists, it also stages
+`../monoclaw-runtime/optional-skills` as the offline official Skills Hub catalog.
+The build fails if the staged default or optional skill trees do not match the
+runtime checkout. Copy the resulting `dist/` directory to the provisioning
+pendrive. By default the builder also writes a sibling
 `tool-packs/mona-secretary-tools/` directory (Mona secretary tools sidecar, not
 inside `dist/`). Copy that sibling beside `dist/` on the pendrive so
 `dist/install-mona-tools.sh` can run after `./install.sh`; omit it only when you
@@ -82,6 +88,19 @@ built with `HATCH_INCLUDE_MONA_TOOLS=0` or skip install-time Mona with
 builder writes a sibling `model-packs/gemma-4-e4b/` directory with its own
 `model-pack-manifest.json`; copy that sibling directory to the pendrive beside
 `dist/` if you want to avoid downloading the model on the target Mac.
+The builder also prepares `tool-packs/skill-deps-pack/` from
+`bundle-inputs/vendor/skill-deps/source-lock.json` when the secretary skill
+dependencies (`remindctl`, `memo`, `imsg`, `himalaya`) need to be downloaded or
+built. Set `HATCH_SKILL_DEPS_FORCE=1` to refresh those ignored prebuilt inputs,
+`HATCH_SKILL_DEPS_AUTO_PREP=0` to require an already-complete `tool-lock.json`,
+or `HATCH_INCLUDE_SKILL_DEPS=0` only for non-release builds that intentionally
+skip those skills.
+
+Populate **`bundle-inputs/vendor/python/current`** on macOS (secretary bundles need **Python ≥ 3.13** for **`memo`**) before wheelhouse/skill-deps prep:
+
+```bash
+bash scripts/stage_vendor_python_macos.sh
+```
 
 Populate the required runtime wheelhouse before `./build.sh`:
 

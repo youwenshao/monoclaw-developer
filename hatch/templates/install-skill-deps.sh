@@ -11,8 +11,9 @@ fi
 
 if [[ ! -d "${SKILL_DEPS_PACK_ROOT}" ]]; then
   printf 'Skill dependencies pack not found: %s\n' "${SKILL_DEPS_PACK_ROOT}" >&2
-  printf 'The pack is optional and only built when HATCH_INCLUDE_SKILL_DEPS=1 was set during ./build.sh.\n' >&2
-  printf 'No skill in the bundled library currently requires it; nothing to install.\n' >&2
+  printf 'This bundle did not ship a skill-deps pack (no entries in bundle-inputs/vendor/skill-deps/tool-lock.json),\n' >&2
+  printf 'or it was omitted by setting HATCH_INCLUDE_SKILL_DEPS=0 or HATCH_INCLUDE_SKILLS_DEPS=0 during ./build.sh.\n' >&2
+  printf 'No bundled skill requires this pack for this release; nothing to install.\n' >&2
   exit 0
 fi
 

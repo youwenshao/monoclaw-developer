@@ -13,7 +13,10 @@ and `./build.sh` must fail when it is missing.
   `bundle-inputs/vendor/python/current/bin/python3` staged into
   `~/.monoclaw/vendor/python/current/bin/python3`.
 - That interpreter must be Python 3.11+ and must be verified by a real venv
-  smoke test before a release bundle is trusted.
+  smoke test before a release bundle is trusted. Secretary bundles also ship
+  **`memo`** via skill-deps; upstream memo declares **`requires-python >= 3.13`**,
+  so stage **`bundle-inputs/vendor/python/current`** with **3.13+** on assembly
+  (`scripts/stage_vendor_python_macos.sh`) before `build_wheelhouse.sh` / skill-deps prep.
 - Do not silently fall back to Apple `/usr/bin/python3`, Homebrew Python, or an
   arbitrary `python3` on `PATH` for the customer runtime.
 - Homebrew may be installed for technician tooling, but it is not the provider

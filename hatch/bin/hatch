@@ -449,7 +449,7 @@ install_runtime_assets() {
     log_warn "Bundle runtime directory missing; manifest may describe an external wheel-only bundle"
   fi
 
-  for asset in python support lm-studio models browser skills launchd wheelhouse provisioning; do
+  for asset in python support lm-studio models browser skills optional-skills launchd wheelhouse provisioning; do
     if [[ -d "${HATCH_BUNDLE_ROOT}/vendor/${asset}" ]]; then
       log_action rm -rf "${home_dir}/vendor/${asset}"
       log_action cp -R "${HATCH_BUNDLE_ROOT}/vendor/${asset}" "${home_dir}/vendor/${asset}"
@@ -523,6 +523,12 @@ write_monoclaw_shim() {
 #!/usr/bin/env bash
 unset PYTHONPATH
 unset PYTHONHOME
+if [[ -d "${user_home}/.monoclaw/vendor/skills" ]]; then
+  export MONOCLAW_BUNDLED_SKILLS="${user_home}/.monoclaw/vendor/skills"
+fi
+if [[ -d "${user_home}/.monoclaw/vendor/optional-skills" ]]; then
+  export MONOCLAW_OPTIONAL_SKILLS="${user_home}/.monoclaw/vendor/optional-skills"
+fi
 exec "${venv_dir}/bin/monoclaw" "\$@"
 EOF
   chmod +x "${shim}"
@@ -892,7 +898,7 @@ run_install_model() {
 
 run_verify_tools_pack() {
   log_step "tools-pack" "Checking optional Mona secretary tools pack"
-  verify_tools_pack_manifest "${HATCH_TOOLS_PACK_ROOT}" | sed 's/^/  ok: /'
+  verify_tools_pack_manifest "${HATCH_TOOLS_PACK_ROOT}" "mona-secretary-tools" | sed 's/^/  ok: /'
 }
 
 install_tools_pack_skills() {
@@ -951,213 +957,6 @@ install_tools_pack_plugins() {
   log_ok "Mona secretary plugins installed into ${target_dir}"
 }
 
-# Prefer MonoClaw-home interpreters (runtime venv, bundled vendor python), then
-# the Hatch bundle staging python, then host python3. Must support `import yaml`.
-hatch_python_with_yaml() {
-  local home_dir="${1:-}"
-  local candidate
-
-  [[ -n "${home_dir}" ]] || return 1
-  for candidate in \
-    "${home_dir}/vendor/runtime/venv/bin/python" \
-    "${home_dir}/vendor/python/current/bin/python3" \
-    "${home_dir}/vendor/python/current/bin/python3.13" \
-    "${home_dir}/vendor/python/current/bin/python3.12" \
-    "${home_dir}/vendor/python/current/bin/python3.11"; do
-    if [[ -x "${candidate}" ]] && "${candidate}" -c "import yaml" >/dev/null 2>&1; then
-      printf '%s\n' "${candidate}"
-      return 0
-    fi
-  done
-
-  if candidate="$(hatch_manifest_python "${HATCH_BUNDLE_ROOT}" 2>/dev/null)"; then
-    if [[ -n "${candidate}" && -x "${candidate}" ]] && "${candidate}" -c "import yaml" >/dev/null 2>&1; then
-      printf '%s\n' "${candidate}"
-      return 0
-    fi
-  fi
-
-  if have_command python3 && python3 -c "import yaml" >/dev/null 2>&1; then
-    command -v python3
-    return 0
-  fi
-
-  return 1
-}
-
-# True when config lists plugin_id under plugins.disabled (stdlib scan only).
-mona_secretary_disabled_in_config() {
-  local config_path="$1"
-  local plugin_id="$2"
-
-  python3 - "${config_path}" "${plugin_id}" <<'PY'
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-plugin_id = sys.argv[2]
-
-if not path.is_file():
-    sys.exit(1)
-
-lines = path.read_text(encoding="utf-8").splitlines()
-in_plugins = False
-in_disabled = False
-disabled_col = None
-
-for raw in lines:
-    line = raw.split("#", 1)[0]
-    if not line.strip():
-        continue
-    stripped = line.lstrip(" \t")
-    indent = len(line) - len(stripped)
-    if indent == 0:
-        if stripped.startswith("plugins:"):
-            in_plugins = True
-            in_disabled = False
-            disabled_col = None
-        else:
-            in_plugins = False
-        continue
-    if not in_plugins:
-        continue
-    if stripped.startswith("disabled:"):
-        in_disabled = True
-        disabled_col = indent
-        continue
-    if in_disabled and disabled_col is not None:
-        if stripped.startswith("- "):
-            item = stripped[2:].strip().strip("'\"")
-            if item == plugin_id:
-                sys.exit(0)
-        elif indent <= disabled_col:
-            in_disabled = False
-
-sys.exit(1)
-PY
-}
-
-# Opt the Hatch-shipped Mona secretary plugin into Runtime discovery by listing
-# it in plugins.enabled. Does not merge example MCP or secretary YAML, and does
-# not override plugins.disabled (warn + skip when the plugin is disabled).
-seed_mona_secretary_plugins_enabled() {
-  local home_dir="$1"
-  local config_path="${home_dir}/config.yaml"
-  local plugin_id="mona-secretary-tools"
-  local python_bin
-
-  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
-    printf '  dry-run: seed %s with plugins.enabled including %s (skipped if plugins.disabled lists it)\n' \
-      "${config_path}" "${plugin_id}"
-    return 0
-  fi
-
-  mkdir -p "${home_dir}"
-
-  if [[ -f "${config_path}" ]] && mona_secretary_disabled_in_config "${config_path}" "${plugin_id}"; then
-    log_warn "plugins.disabled lists ${plugin_id}; not adding to plugins.enabled (override manually if intended)"
-    return 0
-  fi
-
-  if python_bin="$(hatch_python_with_yaml "${home_dir}")"; then
-    local merge_out
-    merge_out="$(mktemp "${TMPDIR:-/tmp}/hatch-mona-plugins.XXXXXX")"
-    PYTHONDONTWRITEBYTECODE=1 "${python_bin}" - "${config_path}" "${plugin_id}" <<'PY' >"${merge_out}"
-import sys
-from pathlib import Path
-
-import yaml  # type: ignore
-
-config_path = Path(sys.argv[1])
-plugin_id = sys.argv[2]
-
-if config_path.exists():
-    text = config_path.read_text(encoding="utf-8")
-    try:
-        data = yaml.safe_load(text) or {}
-    except yaml.YAMLError:
-        sys.stderr.write("invalid YAML in config\n")
-        sys.exit(1)
-else:
-    data = {}
-
-if not isinstance(data, dict):
-    data = {}
-
-plugins = data.get("plugins")
-if not isinstance(plugins, dict):
-    plugins = {}
-
-disabled = plugins.get("disabled")
-if isinstance(disabled, list) and plugin_id in disabled:
-    print("disabled")
-    sys.exit(0)
-
-enabled = plugins.get("enabled")
-if enabled is None:
-    enabled_list: list = []
-elif isinstance(enabled, list):
-    enabled_list = list(enabled)
-else:
-    enabled_list = [enabled]
-
-if plugin_id in enabled_list:
-    print("noop")
-    sys.exit(0)
-
-enabled_list.append(plugin_id)
-plugins["enabled"] = enabled_list
-data["plugins"] = plugins
-
-config_path.parent.mkdir(parents=True, exist_ok=True)
-with config_path.open("w", encoding="utf-8") as handle:
-    yaml.safe_dump(
-        data,
-        handle,
-        sort_keys=False,
-        default_flow_style=False,
-        allow_unicode=True,
-    )
-print("merged")
-PY
-    py_status=$?
-    merge_result="$(tr -d '\r\n' < "${merge_out}")"
-    rm -f "${merge_out}"
-    if [[ "${py_status}" -ne 0 ]]; then
-      log_warn "Failed to merge ${config_path} for ${plugin_id} (python exit ${py_status})"
-      return 0
-    fi
-    case "${merge_result}" in
-      disabled)
-        log_warn "plugins.disabled lists ${plugin_id}; not adding to plugins.enabled (override manually if intended)"
-        ;;
-      noop)
-        log_ok "plugins.enabled already lists ${plugin_id}"
-        ;;
-      merged)
-        log_ok "Updated ${config_path} with plugins.enabled including ${plugin_id}"
-        ;;
-      *)
-        log_warn "Unexpected plugins.enabled seed result for ${config_path}: ${merge_result}"
-        ;;
-    esac
-    return 0
-  fi
-
-  # No PyYAML: only safe to bootstrap an empty config without clobbering user YAML.
-  if [[ -f "${config_path}" ]]; then
-    log_warn "PyYAML is required to merge ${config_path}; add ${plugin_id} under plugins.enabled manually"
-    return 0
-  fi
-
-  cat > "${config_path}" <<EOF
-plugins:
-  enabled:
-    - ${plugin_id}
-EOF
-  log_ok "Created ${config_path} with plugins.enabled including ${plugin_id}"
-}
-
 run_install_tools() {
   local home_dir
   local target_dir
@@ -1171,9 +970,9 @@ run_install_tools() {
   log_action cp -R "${HATCH_TOOLS_PACK_ROOT}" "${target_dir}"
   install_tools_pack_skills "${HATCH_TOOLS_PACK_ROOT}/skills" "${home_dir}/skills"
   install_tools_pack_plugins "${HATCH_TOOLS_PACK_ROOT}/plugins" "${home_dir}/plugins"
-  seed_mona_secretary_plugins_enabled "${home_dir}"
   printf '  manual: review %s before enabling host automation tools\n' "${target_dir}/docs/permissions.md"
   printf '  manual: copy MCP examples from %s only after reviewing path and permission scopes\n' "${target_dir}/config"
+  printf '  next: run monoclaw setup system to review Mona permissions, MCP templates, and tool activation\n'
   if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
     printf '  dry-run: Mona secretary tools installed at %s\n' "${target_dir}"
   else
@@ -1191,7 +990,151 @@ run_verify_skill_deps() {
     warn_or_die "Skill dependencies pack missing tools-pack-manifest.json at ${HATCH_SKILL_DEPS_PACK_ROOT}"
     return
   fi
-  verify_tools_pack_manifest "${HATCH_SKILL_DEPS_PACK_ROOT}" | sed 's/^/  ok: /'
+  verify_tools_pack_manifest "${HATCH_SKILL_DEPS_PACK_ROOT}" "skill-deps-pack" | sed 's/^/  ok: /'
+}
+
+skill_deps_python_specs_present() {
+  local scan_root="$1"
+  local python_bin
+  python_bin="$(hatch_manifest_python "${HATCH_BUNDLE_ROOT:-}")" || return 1
+  PYTHONDONTWRITEBYTECODE=1 "${python_bin}" - "${scan_root}" <<'PY'
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+sys.exit(0 if any(root.glob("python/*/package-spec.json")) else 1)
+PY
+}
+
+install_skill_deps_python_tools() {
+  local scan_root="$1"
+  local target_dir="$2"
+  local home_dir="$3"
+  local runtime_python=""
+  local python_bin
+
+  if ! skill_deps_python_specs_present "${scan_root}"; then
+    return
+  fi
+
+  if [[ "${HATCH_DRY_RUN}" != "true" ]]; then
+    if ! runtime_python="$(select_runtime_python "${home_dir}")"; then
+      die "Python-backed skill dependencies require bundled Python at ${home_dir}/vendor/python/current/bin/python3"
+    fi
+  fi
+
+  python_bin="$(hatch_manifest_python "${HATCH_BUNDLE_ROOT:-}")" || die "Python is required to install Python-backed skill dependencies"
+  PYTHONDONTWRITEBYTECODE=1 \
+  HATCH_DRY_RUN="${HATCH_DRY_RUN}" \
+  HATCH_SKILL_DEPS_SCAN_ROOT="${scan_root}" \
+  HATCH_SKILL_DEPS_TARGET_ROOT="${target_dir}" \
+  HATCH_SKILL_DEPS_RUNTIME_PYTHON="${runtime_python}" \
+    "${python_bin}" <<'PY'
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+dry_run = os.environ.get("HATCH_DRY_RUN", "true") == "true"
+scan_root = Path(os.environ["HATCH_SKILL_DEPS_SCAN_ROOT"])
+target_root = Path(os.environ["HATCH_SKILL_DEPS_TARGET_ROOT"])
+runtime_python = os.environ.get("HATCH_SKILL_DEPS_RUNTIME_PYTHON", "")
+
+def _version_tuple(value: str) -> tuple[int, int, int] | None:
+    if not value:
+        return None
+    parts = value.split(".")
+    try:
+        return (
+            int(parts[0]),
+            int(parts[1]) if len(parts) > 1 else 0,
+            int(parts[2]) if len(parts) > 2 else 0,
+        )
+    except (TypeError, ValueError):
+        return None
+
+def ensure_runtime_python_satisfies(min_python: str, tool: str) -> None:
+    minimum = _version_tuple(min_python)
+    if minimum is None or dry_run:
+        return
+    raw = subprocess.check_output(
+        [
+            runtime_python,
+            "-c",
+            "import sys; print('.'.join(map(str, sys.version_info[:3])))",
+        ],
+        text=True,
+        timeout=15,
+    ).strip()
+    actual = _version_tuple(raw)
+    if actual is None or actual < minimum:
+        need = ".".join(str(part) for part in minimum)
+        found = ".".join(str(part) for part in actual) if actual else "unknown"
+        raise SystemExit(
+            f"Python-backed skill dependency {tool} requires bundled Python >= {need}, found {found}"
+        )
+
+for spec_path in sorted(scan_root.glob("python/*/package-spec.json")):
+    rel_parent = spec_path.parent.relative_to(scan_root)
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    tool = str(spec.get("tool") or spec_path.parent.name)
+    package = str(spec.get("package") or tool)
+    version = str(spec.get("version") or "")
+    entrypoint = str(spec.get("entrypoint") or tool)
+    min_python = str(spec.get("min_python") or "")
+    if not version:
+        raise SystemExit(f"skill-deps package spec missing version: {spec_path}")
+    ensure_runtime_python_satisfies(min_python, tool)
+
+    install_root = target_root / rel_parent
+    wheelhouse = install_root / "wheelhouse"
+    venv = install_root / "venv"
+    shim = target_root / "bin" / tool
+    requirement = f"{package}=={version}"
+
+    if dry_run:
+        print(f"  dry-run: <runtime-python> -m venv {venv}")
+        print(f"  dry-run: {venv / 'bin' / 'python'} -m pip install --no-index --find-links {wheelhouse} {requirement}")
+        print(f"  dry-run: write {shim} shim")
+        continue
+
+    if not wheelhouse.is_dir():
+        raise SystemExit(f"skill-deps wheelhouse missing: {wheelhouse}")
+    if not any(wheelhouse.glob("*.whl")):
+        raise SystemExit(f"skill-deps wheelhouse is empty: {wheelhouse}")
+    if not runtime_python:
+        raise SystemExit("runtime Python path is required for Python-backed skill dependencies")
+
+    shutil.rmtree(venv, ignore_errors=True)
+    subprocess.check_call([runtime_python, "-m", "venv", str(venv)])
+    subprocess.check_call(
+        [
+            str(venv / "bin" / "python"),
+            "-m",
+            "pip",
+            "install",
+            "--no-index",
+            "--find-links",
+            str(wheelhouse),
+            requirement,
+        ]
+    )
+
+    shim.parent.mkdir(parents=True, exist_ok=True)
+    shim.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "SCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\n"
+        f"exec \"${{SCRIPT_DIR}}/../{rel_parent.as_posix()}/venv/bin/{entrypoint}\" \"$@\"\n",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    print(f"  ok: installed Python-backed skill dependency {tool} into {venv}")
+PY
 }
 
 run_verify_skill_readiness() {
@@ -1218,6 +1161,7 @@ run_verify_skill_readiness() {
   HATCH_DRY_RUN="${HATCH_DRY_RUN}" \
   HATCH_SKILL_READINESS_FAIL_ON="${HATCH_SKILL_READINESS_FAIL_ON:-blocked_unknown}" \
     "${python_bin}" - <<'PY' || exit_code=$?
+from __future__ import annotations
 import os
 import re
 import sys
@@ -1476,6 +1420,11 @@ run_install_skill_deps() {
   log_action rm -rf "${target_dir}"
   log_action mkdir -p "${home_dir}/vendor"
   log_action cp -R "${HATCH_SKILL_DEPS_PACK_ROOT}" "${target_dir}"
+  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+    install_skill_deps_python_tools "${HATCH_SKILL_DEPS_PACK_ROOT}" "${target_dir}" "${home_dir}"
+  else
+    install_skill_deps_python_tools "${target_dir}" "${target_dir}" "${home_dir}"
+  fi
   if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
     printf '  dry-run: skill dependencies installed at %s\n' "${target_dir}"
   else

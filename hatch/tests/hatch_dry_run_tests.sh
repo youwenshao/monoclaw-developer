@@ -9,7 +9,7 @@ BUNDLE="${TMP}/dist"
 HOME_DIR="${TMP}/home"
 WHEEL_NAME="monoclaw-runtime.whl"
 PIP_WHEEL_NAME="monoclaw_runtime-0.0.0_test-py3-none-any.whl"
-mkdir -p "${BUNDLE}/runtime" "${BUNDLE}/vendor/skills/customer-office" "${BUNDLE}/vendor/wheelhouse" "${HOME_DIR}"
+mkdir -p "${BUNDLE}/runtime" "${BUNDLE}/vendor/skills/customer-office" "${BUNDLE}/vendor/optional-skills/research/deep-research" "${BUNDLE}/vendor/wheelhouse" "${HOME_DIR}"
 FAKE_PYTHON="${TMP}/python3.11"
 FAKE_ENSUREPIP_BROKEN_PYTHON="${TMP}/python3.11-ensurepip-broken"
 cat > "${FAKE_PYTHON}" <<'SH'
@@ -33,6 +33,7 @@ chmod +x "${FAKE_ENSUREPIP_BROKEN_PYTHON}"
 printf 'hello hatch\n' > "${BUNDLE}/runtime/about.md"
 printf 'wheel placeholder\n' > "${BUNDLE}/runtime/${WHEEL_NAME}"
 printf 'skill placeholder\n' > "${BUNDLE}/vendor/skills/customer-office/SKILL.md"
+printf 'optional skill placeholder\n' > "${BUNDLE}/vendor/optional-skills/research/deep-research/SKILL.md"
 printf 'pip wheel placeholder\n' > "${BUNDLE}/vendor/wheelhouse/pip-24.0-py3-none-any.whl"
 
 SHA="$(shasum -a 256 "${BUNDLE}/runtime/about.md" | awk '{print $1}')"
@@ -41,6 +42,8 @@ WHEEL_SHA="$(shasum -a 256 "${BUNDLE}/runtime/${WHEEL_NAME}" | awk '{print $1}')
 WHEEL_BYTES="$(wc -c < "${BUNDLE}/runtime/${WHEEL_NAME}" | tr -d ' ')"
 SKILL_SHA="$(shasum -a 256 "${BUNDLE}/vendor/skills/customer-office/SKILL.md" | awk '{print $1}')"
 SKILL_BYTES="$(wc -c < "${BUNDLE}/vendor/skills/customer-office/SKILL.md" | tr -d ' ')"
+OPTIONAL_SKILL_SHA="$(shasum -a 256 "${BUNDLE}/vendor/optional-skills/research/deep-research/SKILL.md" | awk '{print $1}')"
+OPTIONAL_SKILL_BYTES="$(wc -c < "${BUNDLE}/vendor/optional-skills/research/deep-research/SKILL.md" | tr -d ' ')"
 WHEELHOUSE_SHA="$(shasum -a 256 "${BUNDLE}/vendor/wheelhouse/pip-24.0-py3-none-any.whl" | awk '{print $1}')"
 WHEELHOUSE_BYTES="$(wc -c < "${BUNDLE}/vendor/wheelhouse/pip-24.0-py3-none-any.whl" | tr -d ' ')"
 
@@ -88,6 +91,12 @@ cat > "${BUNDLE}/hatch-manifest.json" <<JSON
       "kind": "file",
       "sha256": "${SKILL_SHA}",
       "bytes": ${SKILL_BYTES}
+    },
+    {
+      "path": "vendor/optional-skills/research/deep-research/SKILL.md",
+      "kind": "file",
+      "sha256": "${OPTIONAL_SKILL_SHA}",
+      "bytes": ${OPTIONAL_SKILL_BYTES}
     },
     {
       "path": "vendor/wheelhouse/pip-24.0-py3-none-any.whl",
@@ -138,6 +147,7 @@ grep -q "dry-run: leave ${HOME_DIR}/.monoclaw/.env for monoclaw setup" "${TMP}/i
 grep -q "dry-run: leave ${HOME_DIR}/.monoclaw/config.yaml for monoclaw setup" "${TMP}/install.out"
 grep -q "dry-run: cp ${BUNDLE}/hatch-manifest.json ${HOME_DIR}/.monoclaw/vendor/hatch-manifest.json" "${TMP}/install.out"
 grep -q "dry-run: cp -R ${BUNDLE}/runtime ${HOME_DIR}/.monoclaw/vendor/runtime" "${TMP}/install.out"
+grep -q "dry-run: cp -R ${BUNDLE}/vendor/optional-skills ${HOME_DIR}/.monoclaw/vendor/optional-skills" "${TMP}/install.out"
 grep -q "Using Python ${FAKE_PYTHON} (3.11.9) for runtime bootstrap" "${TMP}/install.out"
 grep -q "dry-run: ${FAKE_PYTHON} -m venv ${HOME_DIR}/.monoclaw/vendor/runtime/venv" "${TMP}/install.out"
 grep -Fq "dry-run: cp ${HOME_DIR}/.monoclaw/vendor/runtime/${WHEEL_NAME} ${HOME_DIR}/.monoclaw/vendor/runtime/.hatch-install/${PIP_WHEEL_NAME}" "${TMP}/install.out"

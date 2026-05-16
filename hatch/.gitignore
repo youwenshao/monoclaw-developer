@@ -15,8 +15,14 @@
 !/bundle-inputs/vendor/mona-tools/templates/**
 /bundle-inputs/vendor/mona-tools/prebuilt/
 /bundle-inputs/vendor/mona-tools/tool-lock.json
+!/bundle-inputs/vendor/skill-deps/
+/bundle-inputs/vendor/skill-deps/*
+!/bundle-inputs/vendor/skill-deps/README.md
+!/bundle-inputs/vendor/skill-deps/source-lock.json
+/bundle-inputs/vendor/skill-deps/prebuilt/
 /model-packs/
 /.mona-tools-build/
+/.skill-deps-build/
 /.mona-node-dist-cache/
 /provisioning-logs/
 /*.tar
