@@ -19,7 +19,9 @@
       "source": "vendor/mona-tools/prebuilt/bin/wacrawl",
       "path": "bin/wacrawl",
       "activation": "default",
-      "required_permissions": ["full-disk-access"]
+      "required_permissions": ["full-disk-access"],
+      "verify_command": ["{bin}", "--version"],
+      "verify_strict": true
     },
     {
       "name": "slacrawl",
@@ -31,7 +33,9 @@
       "source": "vendor/mona-tools/prebuilt/bin/slacrawl",
       "path": "bin/slacrawl",
       "activation": "default",
-      "required_permissions": ["full-disk-access", "network"]
+      "required_permissions": ["full-disk-access", "network"],
+      "verify_command": ["{bin}", "--version"],
+      "verify_strict": true
     },
     {
       "name": "summarize",
@@ -43,7 +47,9 @@
       "source": "vendor/mona-tools/prebuilt/node/apps/summarize",
       "path": "node/apps/summarize/dist/cli.js",
       "activation": "default",
-      "required_permissions": ["network"]
+      "required_permissions": ["network"],
+      "verify_command": ["{bin}", "--version"],
+      "verify_strict": true
     },
     {
       "name": "macos-automator-mcp",
@@ -55,7 +61,8 @@
       "source": "vendor/mona-tools/prebuilt/node/apps/macos-automator-mcp",
       "path": "node/apps/macos-automator-mcp/dist/server.js",
       "activation": "opt-in",
-      "required_permissions": ["automation", "accessibility"]
+      "required_permissions": ["automation", "accessibility"],
+      "verify_skip_reason": "MCP server has no non-blocking argv probe; entrypoint immediately calls main() which binds StdioServerTransport. Behavioral verification deferred to a runtime MCP integration check."
     },
     {
       "name": "conduit-mcp",
@@ -67,7 +74,8 @@
       "source": "vendor/mona-tools/prebuilt/node/apps/conduit-mcp",
       "path": "node/apps/conduit-mcp/dist/src/mcp-server.js",
       "activation": "optional",
-      "required_permissions": ["filesystem", "network"]
+      "required_permissions": ["filesystem", "network"],
+      "verify_skip_reason": "MCP server has no non-blocking argv probe; entrypoint constructs Server at module scope and binds StdioServerTransport. Behavioral verification deferred to a runtime MCP integration check."
     },
     {
       "name": "ghcrawl",
@@ -79,7 +87,12 @@
       "source": "vendor/mona-tools/prebuilt/node/apps/ghcrawl",
       "path": "node/apps/ghcrawl/apps/cli/bin/ghcrawl.js",
       "activation": "optional",
-      "required_permissions": ["network"]
+      "required_permissions": ["network"],
+      "verify_command": ["{bin}", "--version"],
+      "verify_strict": true,
+      "verify_env": {
+        "GHCRAWL_NODE_REEXEC": "1"
+      }
     },
     {
       "name": "vox",
@@ -92,7 +105,9 @@
       "path": "node/apps/vox/dist/cli.js",
       "activation": "opt-in",
       "optional": true,
-      "required_permissions": ["network", "telecom-consent"]
+      "required_permissions": ["network", "telecom-consent"],
+      "verify_command": ["{bin}", "--version"],
+      "verify_strict": true
     },
     {
       "name": "brabble",

@@ -7,22 +7,24 @@
   "tools": [
     {
       "name": "remindctl",
-      "version": "0.1.1",
+      "version": "0.2.0",
       "license": "MIT",
-      "repository": "https://github.com/steipete/remindctl",
-      "source_ref": "v0.1.1",
+      "repository": "https://github.com/openclaw/remindctl",
+      "source_ref": "v0.2.0",
       "activation": "opt-in",
       "required_permissions": [
         "reminders"
       ],
       "source": "prebuilt/bin/remindctl",
       "path": "bin/remindctl",
+      "verify_command": ["{bin}", "--version"],
+      "verify_strict": true,
       "methods": [
         {
           "type": "github_release_asset",
-          "owner": "steipete",
+          "owner": "openclaw",
           "repo": "remindctl",
-          "tag": "v0.1.1",
+          "tag": "v0.2.0",
           "asset_patterns": {
             "darwin-arm64": [
               "remindctl.*darwin.*arm64.*",
@@ -39,8 +41,8 @@
         },
         {
           "type": "swift_build",
-          "repository": "https://github.com/steipete/remindctl.git",
-          "ref": "v0.1.1",
+          "repository": "https://github.com/openclaw/remindctl.git",
+          "ref": "v0.2.0",
           "product": "remindctl"
         }
       ]
@@ -57,6 +59,7 @@
       ],
       "source": "prebuilt/python/memo/.install-marker",
       "path": "python/memo/.install-marker",
+      "verify_skip_reason": "Python wheelhouse; the manifest path points to .install-marker, not an executable. The real `memo` entrypoint is installed on the target Mac by install-skill-deps.sh from python/memo/wheelhouse/*.whl using the bundled runtime Python. Behavioral verification belongs there, not at the build-host probe.",
       "methods": [
         {
           "type": "python_wheelhouse",
@@ -81,6 +84,8 @@
       ],
       "source": "prebuilt/bin/imsg",
       "path": "bin/imsg",
+      "verify_command": ["{bin}", "--version"],
+      "verify_strict": true,
       "methods": [
         {
           "type": "github_release_asset",
@@ -122,6 +127,8 @@
       ],
       "source": "prebuilt/bin/himalaya",
       "path": "bin/himalaya",
+      "verify_command": ["{bin}", "--version"],
+      "verify_strict": true,
       "methods": [
         {
           "type": "download_archive",

@@ -407,7 +407,29 @@ def prepare_tool(tool: dict[str, Any], input_root: Path, vendor_root: Path, buil
         else:
             fail(f"could not prepare {tool['name']}:\n  " + "\n  ".join(errors))
 
-    prepared = {key: tool[key] for key in ("name", "version", "license", "repository", "source_ref", "activation", "required_permissions", "source", "path") if key in tool}
+    prepared = {
+        key: tool[key]
+        for key in (
+            "name",
+            "version",
+            "license",
+            "repository",
+            "source_ref",
+            "activation",
+            "required_permissions",
+            "source",
+            "path",
+            # Verification contract: propagate the same fields the Mona pack
+            # uses so generate_tools_pack_manifest.py can carry them into
+            # tools-pack-manifest.json. See
+            # plans/mona-tool-verify-command-implementation.md (Phase 5).
+            "verify_command",
+            "verify_strict",
+            "verify_env",
+            "verify_skip_reason",
+        )
+        if key in tool
+    }
     prepared["sha256"] = sha256(output)
     if output.name == output.stem:
         output.chmod(output.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)

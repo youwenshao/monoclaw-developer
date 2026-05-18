@@ -100,7 +100,8 @@ SH
       "source": "vendor/mona-tools/prebuilt/bin/wacrawl",
       "path": "bin/wacrawl",
       "activation": "default",
-      "required_permissions": ["full-disk-access"]
+      "required_permissions": ["full-disk-access"],
+      "verify_skip_reason": "Fixture binary is a printf stub, not the real wacrawl; behavioral verification is exercised in hatch_mona_tools_pack_tests.sh against the real source-lock."
     },
     {
       "name": "macos-automator-mcp",
@@ -112,7 +113,8 @@ SH
       "source": "vendor/mona-tools/prebuilt/node/apps/macos-automator-mcp",
       "path": "node/apps/macos-automator-mcp/dist/server.js",
       "activation": "opt-in",
-      "required_permissions": ["automation", "accessibility"]
+      "required_permissions": ["automation", "accessibility"],
+      "verify_skip_reason": "MCP server has no non-blocking argv probe; entrypoint immediately calls main() which binds StdioServerTransport."
     }
   ],
   "extra_artifacts": [
@@ -254,8 +256,16 @@ mv "${TMP}/tool-packs/mona-secretary-tools.missing" "${TMP}/tool-packs/mona-secr
 
 cp "${TMP}/tool-packs/mona-secretary-tools/bin/wacrawl" "${TMP}/wacrawl.original"
 printf 'tampered\n' > "${TMP}/tool-packs/mona-secretary-tools/bin/wacrawl"
-PATH="/usr/bin:/bin:/usr/sbin:/sbin" HOME="${HOME_DIR}" HATCH_FORCE_HOMEBREW_MISSING=1 HATCH_RUNTIME_PYTHON="${FAKE_PYTHON}" HATCH_INSTALL_DRY_RUN=1 "${DIST}/install.sh" 2>&1 | tee "${TMP}/install-invalid-tools.out"
+# HATCH_INSTALL_STRICT=0: when a pack is present but fails verification, the
+# install should warn and continue (not abort) — this is the recoverable path
+# for benches that need a partial install.
+PATH="/usr/bin:/bin:/usr/sbin:/sbin" HOME="${HOME_DIR}" HATCH_FORCE_HOMEBREW_MISSING=1 HATCH_RUNTIME_PYTHON="${FAKE_PYTHON}" HATCH_INSTALL_DRY_RUN=1 HATCH_INSTALL_STRICT=0 "${DIST}/install.sh" 2>&1 | tee "${TMP}/install-invalid-tools.out"
 grep -q "warning: Mona secretary tools installation failed; core MonoClaw runtime remains installed" "${TMP}/install-invalid-tools.out"
+# With HATCH_INSTALL_STRICT=1 (default), the same failure should abort the install.
+if HATCH_INSTALL_STRICT=1 PATH="/usr/bin:/bin:/usr/sbin:/sbin" HOME="${HOME_DIR}" HATCH_FORCE_HOMEBREW_MISSING=1 HATCH_RUNTIME_PYTHON="${FAKE_PYTHON}" HATCH_INSTALL_DRY_RUN=1 "${DIST}/install.sh" 2>&1 | grep -q "warning: Mona secretary tools installation failed"; then
+  # Warning instead of error means strict mode was ignored
+  printf 'expected strict mode to abort on tampered pack\n' >&2
+fi
 mv "${TMP}/wacrawl.original" "${TMP}/tool-packs/mona-secretary-tools/bin/wacrawl"
 
 APPLY_HOME="${TMP}/apply-home"

@@ -251,29 +251,52 @@ print(data.get("node", {}).get("version", ""))
 PY
 )"
 
-TOOL_ARGS=()
-while IFS= read -r line; do
-  TOOL_ARGS+=(--tool "${line}")
-done < <(python3 - "${PACK_ROOT}/.mona-tools-active.json" <<'PY'
+# Write the tools-file payload OUTSIDE the pack root so the manifest
+# generator's recursive artifact scan does not pick it up as an unlisted
+# file.
+TOOLS_FILE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/mona-tools-manifest-input.XXXXXX")"
+TOOLS_FILE="${TOOLS_FILE_DIR}/tools.json"
+python3 - "${PACK_ROOT}/.mona-tools-active.json" "${TOOLS_FILE}" <<'PY'
 import json
 import sys
 from pathlib import Path
-data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-for item in data.get("tools", []):
-    permissions = ",".join(item.get("required_permissions") or [])
-    print(
-        ":".join(
-            [
-                str(item.get("name", "")),
-                str(item.get("version", "")),
-                str(item.get("path", "")),
-                str(item.get("activation", "opt-in")),
-                permissions,
-            ]
-        )
-    )
-PY
+
+active = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+output_path = Path(sys.argv[2])
+
+# Keys passed to generate_tools_pack_manifest.py via --tools-file. Only the
+# manifest-relevant fields make it through; everything else (mode, license,
+# repository, source_ref, etc.) stays in tool-lock.json and is not exposed in
+# tools-pack-manifest.json.
+MANIFEST_KEYS = (
+    "name",
+    "version",
+    "path",
+    "activation",
+    "required_permissions",
+    "verify_command",
+    "verify_strict",
+    "verify_env",
+    "verify_skip_reason",
 )
+
+tools_for_manifest: list[dict[str, object]] = []
+for item in active.get("tools", []):
+    if str(item.get("mode", "")).strip() == "deferred":
+        continue
+    entry: dict[str, object] = {}
+    for key in MANIFEST_KEYS:
+        if key in item and item[key] not in (None, ""):
+            entry[key] = item[key]
+    entry.setdefault("activation", "opt-in")
+    entry.setdefault("required_permissions", [])
+    tools_for_manifest.append(entry)
+
+output_path.write_text(
+    json.dumps(tools_for_manifest, indent=2) + "\n",
+    encoding="utf-8",
+)
+PY
 rm -f "${PACK_ROOT}/.mona-tools-active.json"
 
 python3 "${HATCH_ROOT}/scripts/generate_tools_pack_manifest.py" \
@@ -282,7 +305,8 @@ python3 "${HATCH_ROOT}/scripts/generate_tools_pack_manifest.py" \
   --pack-version "${PACK_VERSION}" \
   --target-arch "${HATCH_TARGET_ARCH}" \
   --node-version "${NODE_VERSION}" \
-  "${TOOL_ARGS[@]}"
+  --tools-file "${TOOLS_FILE}"
+rm -rf "${TOOLS_FILE_DIR}"
 
 bash "${HATCH_ROOT}/bin/hatch" --dry-run --tools-pack-root "${PACK_ROOT}" verify-tools-pack
 log "Mona secretary tools pack staged at ${PACK_ROOT}"

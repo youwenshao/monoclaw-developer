@@ -249,9 +249,17 @@ stage_mona_tools_pack() {
     return 0
   fi
 
+  # At build time we want the strict-verify behavior wired through
+  # build_mona_tools_pack.sh -> verify-tools-pack: any tool whose probe is
+  # marked verify_strict: true must succeed, and missing verify_command on a
+  # bundled tool is a hard fail. The install-time path on the customer Mac
+  # stays lenient (env unset). See
+  # plans/mona-tool-verify-command-implementation.md (Phase 4).
+  local _strict_verify="${HATCH_TOOLS_PACK_STRICT_VERIFY:-1}"
   if ! HATCH_INPUT_ROOT="${HATCH_INPUT_ROOT}" \
     HATCH_TOOLS_PACKS_ROOT="${HATCH_TOOLS_PACKS_ROOT}" \
     HATCH_TARGET_ARCH="${HATCH_TARGET_ARCH}" \
+    HATCH_TOOLS_PACK_STRICT_VERIFY="${_strict_verify}" \
       bash "${HATCH_ROOT}/scripts/build_mona_tools_pack.sh"; then
     if [[ "${HATCH_OPTIONAL_PACKS_STRICT:-1}" == "1" ]]; then
       printf '[hatch-build] fail: Mona secretary tools pack build failed under HATCH_OPTIONAL_PACKS_STRICT=1 (see script output above).\n' >&2
@@ -285,10 +293,16 @@ stage_skill_deps_pack() {
     return 0
   fi
 
+  # Same strict-verify story as stage_mona_tools_pack: every skill-dep tool
+  # bundled in the pack must have either a successful verify_command probe or
+  # a documented verify_skip_reason. The install-time path on the customer Mac
+  # stays lenient (env unset).
+  local _skill_deps_strict_verify="${HATCH_TOOLS_PACK_STRICT_VERIFY:-1}"
   if ! HATCH_INPUT_ROOT="${HATCH_INPUT_ROOT}" \
     HATCH_TOOLS_PACKS_ROOT="${HATCH_TOOLS_PACKS_ROOT}" \
     HATCH_RUNTIME_ROOT="${HATCH_RUNTIME_ROOT}" \
     HATCH_TARGET_ARCH="${HATCH_TARGET_ARCH}" \
+    HATCH_TOOLS_PACK_STRICT_VERIFY="${_skill_deps_strict_verify}" \
       bash "${HATCH_ROOT}/scripts/build_skill_deps_pack.sh"; then
     if [[ "${HATCH_OPTIONAL_PACKS_STRICT:-1}" == "1" ]]; then
       printf '[hatch-build] fail: skill-deps pack build failed under HATCH_OPTIONAL_PACKS_STRICT=1 (see script output above, e.g. bundled Python vs wheelhouse min_python).\n' >&2

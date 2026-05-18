@@ -69,7 +69,7 @@ grep -q "dry-run: cp -R ${PACK} ${HOME_DIR}/.monoclaw/vendor/mona-tools" "${TMP}
 grep -q "dry-run: install Mona secretary skills into ${HOME_DIR}/.monoclaw/skills" "${TMP}/install-tools.out"
 grep -q "dry-run: install Mona secretary plugins into ${HOME_DIR}/.monoclaw/plugins" "${TMP}/install-tools.out"
 grep -q "manual: review ${HOME_DIR}/.monoclaw/vendor/mona-tools/docs/permissions.md before enabling host automation tools" "${TMP}/install-tools.out"
-grep -q "next: run monoclaw setup system to review Mona permissions, MCP templates, and tool activation" "${TMP}/install-tools.out"
+grep -q "next: run monoclaw provision to complete first-run onboarding" "${TMP}/install-tools.out"
 if grep -q "plugins.enabled" "${TMP}/install-tools.out"; then
   printf 'install-tools should not activate Mona plugins; run monoclaw setup system for reviewed activation\n' >&2
   exit 1

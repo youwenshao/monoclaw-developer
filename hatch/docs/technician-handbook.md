@@ -51,14 +51,21 @@ cd /Volumes/<YOUR_PENDRIVE>/dist
 
 ### Expected Output
 
-You should see a sequence of `[install]` and `[ok]` lines, ending with:
+You should see a sequence of `[install]` and `[ok]` lines, ending with a handoff block and — when stdin/stdout are a real terminal — an interactive prompt:
 
 ```
 [install] Technician handoff
   next: open a new terminal or run: export PATH="$HOME/.local/bin:$PATH"
   next: verify runtime with: monoclaw --version
-  next: run monoclaw setup
+  next: complete setup with: monoclaw provision
+        (install.sh will prompt to run this automatically when a TTY is available)
+
+  MonoClaw is installed.
+  Run "monoclaw provision" now to configure your email account,
+  secretary tools, credentials, and core dependencies? [Y/n]
 ```
+
+Accepting the prompt (default: **Y**) launches `monoclaw provision` immediately in the same terminal. You can also defer it and run `monoclaw provision` from a new terminal after the install completes.
 
 If you see `[warn]` instead of `[ok]`, read the warning. Common benign warnings:
 - "Homebrew missing; installing with the official Homebrew installer" — normal on a fresh Mac.
@@ -98,19 +105,23 @@ This runs `preflight` + `verify` + `verify-local-inference` in one pass and tell
 
 ## 4. Customer-Specific Setup
 
-Run the setup wizard:
+Run the full first-run provisioning wizard:
 
 ```bash
-monoclaw setup
+monoclaw provision
 ```
 
-This is where you or the customer chooses:
-- AI provider (hosted vs. LM Studio local inference).
-- Messaging platforms (Telegram, Slack, WhatsApp).
-- Secrets and API keys.
-- Customer-specific configuration.
+This walks every setup section in order with a live verification probe after each step:
 
-**Hatch does not collect secrets.** Do not paste tokens into the terminal outside of `monoclaw setup`, and never commit `.env` or `config.yaml` to git.
+1. **Model & Provider** — choose hosted or LM Studio local inference; proves round-trip with one test completion.
+2. **Tools** — enable/disable toolsets; installs `ddgs` for zero-config web search if not already present.
+3. **Messaging Gateway** — configure Telegram, Slack, WhatsApp, Discord, etc.; dry-connects each configured platform.
+4. **System Configuration** — activates secretary tools (himalaya email, remindctl, memo, imsg); drives `himalaya account configure` for email; installs/verifies brew formulas for core deps (node, uv, opus, ffmpeg); migrates any plaintext passwords in `~/.config/himalaya/config.toml` to the macOS Keychain.
+5. **Agent Settings** — max turns, compression, memory, and other per-session preferences.
+
+Use `--skip <section>` to skip any step you've already completed (`model`, `tools`, `gateway`, `system`, `agent`). Individual sections can be re-run any time with `monoclaw setup <section>`.
+
+**Hatch does not collect secrets.** Do not paste tokens into the terminal outside of `monoclaw provision` or `monoclaw setup`, and never commit `.env` or `config.yaml` to git.
 
 ### If Local Inference Was Configured
 
@@ -188,12 +199,16 @@ This removes and replaces `~/.monoclaw/vendor/` but still preserves `customer/`,
 
 If the target Mac has no internet:
 1. Ensure Xcode CLT is already installed before you arrive (or install from a local `.pkg`).
-2. Set `HATCH_SKIP_HOMEBREW_INSTALL=1` so Hatch does not attempt to download Homebrew:
+2. Set both offline flags so Hatch and the provision wizard skip any network steps:
    ```bash
    export HATCH_SKIP_HOMEBREW_INSTALL=1
+   export HATCH_INSTALL_OFFLINE=1
    ./install.sh
    ```
+   - `HATCH_SKIP_HOMEBREW_INSTALL=1` — prevents Hatch from downloading Homebrew.
+   - `HATCH_INSTALL_OFFLINE=1` — skips `brew install` for Class-A secretary tools and Class-C/D core deps; falls back to the bundled binaries.
 3. The bundle must contain a populated `vendor/wheelhouse/` (this is the assembly operator's responsibility). If the install fails with a wheelhouse error, the bundle was built incorrectly—do not attempt network fallbacks on a customer Mac.
+4. After install, run `monoclaw provision` once network is restored to complete the brew formula installs and email account wizard.
 
 ### When to Call Assembly / Engineering
 
@@ -208,11 +223,13 @@ Do not improvise fixes on the target Mac. Escalate when:
 ## 6. Handoff Checklist (Sign Off Before Leaving)
 
 - [ ] `monoclaw --version` prints a version in a fresh Terminal window.
-- [ ] `monoclaw setup` has been run and the customer can launch it again.
+- [ ] `monoclaw provision` completed without issues — or `monoclaw doctor` shows all essential checks green.
+- [ ] If email is in scope: `himalaya account list` returns at least one account (verify inside the provision wizard or manually).
 - [ ] If local inference: LM Studio is installed, the model is imported, and `hatch verify-local-inference` passes.
 - [ ] If Mona tools: `~/.monoclaw/vendor/mona-tools/docs/permissions.md` has been reviewed with the customer.
 - [ ] No secrets were pasted into public issue trackers, commits, or chat logs.
 - [ ] `~/.monoclaw/logs/` exists and is writable (check with `touch ~/.monoclaw/logs/test && rm ~/.monoclaw/logs/test`).
+- [ ] The customer knows to run `monoclaw provision` again if they add a new email account or messaging platform.
 - [ ] The customer knows how to restart MonoClaw if needed (relevant once launchd plists are finalized in a future release).
 
 ---
@@ -223,8 +240,11 @@ Do not improvise fixes on the target Mac. Escalate when:
 |---|---|
 | `./install.sh` | Every provision or rerun. |
 | `monoclaw --version` | Verify the runtime is reachable. |
-| `monoclaw setup` | Configure provider, messaging, and secrets. |
-| `bash dist/bin/hatch doctor` | Full diagnostic when something feels wrong. |
+| `monoclaw provision` | **First-run onboarding** — configures provider, email, messaging, tools, and credentials in order with live verification after each step. |
+| `monoclaw provision --skip system` | Re-run provision skipping the system step (e.g. already have email configured). |
+| `monoclaw setup <section>` | Re-configure a single section: `model`, `tools`, `gateway`, `system`, `tts`, `agent`. |
+| `monoclaw doctor` | Quick diagnostic — shows which tools are green and which need attention. |
+| `bash dist/bin/hatch doctor` | Full Hatch-level diagnostic (runs before `monoclaw` is installed, or when the runtime itself is suspect). |
 | `bash dist/bin/hatch verify` | Check core runtime integrity only. |
 | `bash dist/bin/hatch verify-local-inference` | Check LM Studio + model readiness. |
 | `./install-gemma-model.sh` | Stage the model pack when local inference is enabled. |

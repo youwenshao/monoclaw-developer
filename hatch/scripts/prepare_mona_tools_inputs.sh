@@ -355,7 +355,18 @@ def lock_common(tool: dict[str, object], source_ref: str) -> dict[str, object]:
         "activation": tool["activation"],
         "required_permissions": tool["required_permissions"],
     }
-    for key in ("optional", "promotion_gates", "service_recipe"):
+    for key in (
+        "optional",
+        "promotion_gates",
+        "service_recipe",
+        # Verification contract propagated to tool-lock.json so the manifest
+        # generator can emit it into tools-pack-manifest.json. See
+        # plans/mona-tool-verify-command-implementation.md.
+        "verify_command",
+        "verify_strict",
+        "verify_env",
+        "verify_skip_reason",
+    ):
         if key in tool:
             result[key] = tool[key]
     return result

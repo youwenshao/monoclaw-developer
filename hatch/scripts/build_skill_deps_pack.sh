@@ -287,6 +287,12 @@ for tool in tools:
         "activation": activation,
         "required_permissions": required_permissions,
     }
+    # Verification contract: propagate the same fields the Mona pack uses so
+    # generate_tools_pack_manifest.py emits them into the manifest. See
+    # plans/mona-tool-verify-command-implementation.md (Phase 5).
+    for verify_key in ("verify_command", "verify_strict", "verify_env", "verify_skip_reason"):
+        if verify_key in tool and tool[verify_key] not in (None, ""):
+            active_tool[verify_key] = tool[verify_key]
     active_tool.update(tool_metadata)
     active_tools.append(active_tool)
 
@@ -322,29 +328,49 @@ print(data.get("pack", {}).get("version", "0.0.0"))
 PY
 )"
 
-TOOL_ARGS=()
-while IFS= read -r line; do
-  TOOL_ARGS+=(--tool "${line}")
-done < <(python3 - "${PACK_ROOT}/.skill-deps-active.json" <<'PY'
+# Write the tools-file payload OUTSIDE the pack root so the manifest
+# generator's recursive artifact scan does not pick it up as an unlisted
+# file. Keep the legacy colon-encoded shape behind --tools-file for now;
+# Phase 5 of the verify_command rollout will add verify_command/skip_reason
+# fields to skill-deps source-lock.json. See
+# plans/mona-tool-verify-command-implementation.md.
+TOOLS_FILE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/skill-deps-manifest-input.XXXXXX")"
+TOOLS_FILE="${TOOLS_FILE_DIR}/tools.json"
+python3 - "${PACK_ROOT}/.skill-deps-active.json" "${TOOLS_FILE}" <<'PY'
 import json
 import sys
 from pathlib import Path
-data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-for item in data.get("tools", []):
-    permissions = ",".join(item.get("required_permissions") or [])
-    print(
-        ":".join(
-            [
-                str(item.get("name", "")),
-                str(item.get("version", "")),
-                str(item.get("path", "")),
-                str(item.get("activation", "default")),
-                permissions,
-            ]
-        )
-    )
-PY
+
+active = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+output_path = Path(sys.argv[2])
+
+MANIFEST_KEYS = (
+    "name",
+    "version",
+    "path",
+    "activation",
+    "required_permissions",
+    "verify_command",
+    "verify_strict",
+    "verify_env",
+    "verify_skip_reason",
 )
+
+tools_for_manifest: list[dict[str, object]] = []
+for item in active.get("tools", []):
+    entry: dict[str, object] = {}
+    for key in MANIFEST_KEYS:
+        if key in item and item[key] not in (None, ""):
+            entry[key] = item[key]
+    entry.setdefault("activation", "default")
+    entry.setdefault("required_permissions", [])
+    tools_for_manifest.append(entry)
+
+output_path.write_text(
+    json.dumps(tools_for_manifest, indent=2) + "\n",
+    encoding="utf-8",
+)
+PY
 rm -f "${PACK_ROOT}/.skill-deps-active.json"
 
 python3 "${HATCH_ROOT}/scripts/generate_tools_pack_manifest.py" \
@@ -352,9 +378,17 @@ python3 "${HATCH_ROOT}/scripts/generate_tools_pack_manifest.py" \
   --pack-id "${PACK_ID}" \
   --pack-version "${PACK_VERSION}" \
   --target-arch "${HATCH_TARGET_ARCH:-$(uname -m)}" \
-  "${TOOL_ARGS[@]}" || {
+  --tools-file "${TOOLS_FILE}" || {
+    rm -rf "${TOOLS_FILE_DIR}"
     log "Failed to generate tools-pack-manifest.json for skill-deps-pack"
     exit 1
   }
+rm -rf "${TOOLS_FILE_DIR}"
+
+# Run the same verifier the Mona pack uses, including verify_command probes
+# and strict-mode honoring. Note: verify-skill-deps uses --skill-deps-pack-root,
+# not --tools-pack-root (which is for verify-tools-pack against Mona). The
+# verifier looks up the pack-id "skill-deps-pack" internally.
+bash "${HATCH_ROOT}/bin/hatch" --dry-run --skill-deps-pack-root "${PACK_ROOT}" verify-skill-deps
 
 log "skill-deps pack built at ${PACK_ROOT}"

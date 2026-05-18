@@ -21,7 +21,9 @@
       "build": {
         "type": "go",
         "package": "./cmd/wacrawl"
-      }
+      },
+      "verify_command": ["{bin}", "--version"],
+      "verify_strict": true
     },
     {
       "name": "slacrawl",
@@ -35,7 +37,9 @@
       "build": {
         "type": "go",
         "package": "./cmd/slacrawl"
-      }
+      },
+      "verify_command": ["{bin}", "--version"],
+      "verify_strict": true
     },
     {
       "name": "summarize",
@@ -52,7 +56,9 @@
         "package_manager": "pnpm",
         "install": ["pnpm", "install", "--frozen-lockfile"],
         "build": ["pnpm", "run", "build"]
-      }
+      },
+      "verify_command": ["{bin}", "--version"],
+      "verify_strict": true
     },
     {
       "name": "macos-automator-mcp",
@@ -69,7 +75,8 @@
         "package_manager": "pnpm",
         "install": ["pnpm", "install", "--frozen-lockfile"],
         "build": ["pnpm", "run", "build"]
-      }
+      },
+      "verify_skip_reason": "MCP server has no non-blocking argv probe; entrypoint immediately calls main() which binds StdioServerTransport. Behavioral verification deferred to a runtime MCP integration check."
     },
     {
       "name": "conduit-mcp",
@@ -87,7 +94,8 @@
         "package_manager": "pnpm",
         "install": ["pnpm", "install", "--frozen-lockfile"],
         "build": ["pnpm", "run", "build"]
-      }
+      },
+      "verify_skip_reason": "MCP server has no non-blocking argv probe; entrypoint constructs Server at module scope and binds StdioServerTransport. Behavioral verification deferred to a runtime MCP integration check."
     },
     {
       "name": "ghcrawl",
@@ -105,6 +113,11 @@
         "package_manager": "pnpm",
         "install": ["pnpm", "install", "--frozen-lockfile"],
         "build": ["pnpm", "run", "build"]
+      },
+      "verify_command": ["{bin}", "--version"],
+      "verify_strict": true,
+      "verify_env": {
+        "GHCRAWL_NODE_REEXEC": "1"
       }
     },
     {
@@ -130,7 +143,9 @@
         "package_manager": "pnpm",
         "install": ["pnpm", "install", "--frozen-lockfile"],
         "build": ["pnpm", "run", "build"]
-      }
+      },
+      "verify_command": ["{bin}", "--version"],
+      "verify_strict": true
     },
     {
       "name": "brabble",

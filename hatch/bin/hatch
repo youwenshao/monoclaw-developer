@@ -39,7 +39,7 @@ while [[ $# -gt 0 ]]; do
       HATCH_SKILL_DEPS_PACK_ROOT="$(cd "$2" && pwd)"
       shift 2
       ;;
-    prepare-bundle|preflight|cleanup-existing|install|verify|doctor|verify-local-inference|verify-model-pack|install-model|verify-tools-pack|install-tools|verify-skill-deps|install-skill-deps|verify-skill-readiness)
+    prepare-bundle|preflight|cleanup-existing|install|verify|doctor|verify-local-inference|verify-model-pack|install-model|verify-tools-pack|install-tools|verify-skill-deps|install-skill-deps|install-core-deps|verify-skill-readiness)
       COMMAND="$1"
       shift
       ;;
@@ -56,6 +56,7 @@ Usage:
   hatch/bin/hatch [--dry-run|--apply] [--bundle-root dist] [--tools-pack-root tool-packs/mona-secretary-tools] install-tools
   hatch/bin/hatch [--dry-run|--apply] [--bundle-root dist] [--skill-deps-pack-root tool-packs/skill-deps-pack] verify-skill-deps
   hatch/bin/hatch [--dry-run|--apply] [--bundle-root dist] [--skill-deps-pack-root tool-packs/skill-deps-pack] install-skill-deps
+  hatch/bin/hatch [--dry-run|--apply] install-core-deps
   hatch/bin/hatch [--dry-run|--apply] verify
   hatch/bin/hatch [--dry-run|--apply] verify-local-inference
   hatch/bin/hatch [--dry-run|--apply] verify-skill-readiness
@@ -158,25 +159,6 @@ prepend_path_var() {
   fi
 }
 
-configure_homebrew_python_library_paths() {
-  local prefix
-  local expat_lib
-  local prefix_lib
-  prefix="$(homebrew_prefix)"
-  expat_lib="${prefix}/opt/expat/lib"
-  prefix_lib="${prefix}/lib"
-
-  prepend_path_var DYLD_LIBRARY_PATH "${prefix_lib}"
-  prepend_path_var DYLD_LIBRARY_PATH "${expat_lib}"
-  prepend_path_var DYLD_FALLBACK_LIBRARY_PATH "${prefix_lib}"
-  prepend_path_var DYLD_FALLBACK_LIBRARY_PATH "${expat_lib}"
-
-  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
-    printf '  dry-run: export DYLD_LIBRARY_PATH=%s\n' "${DYLD_LIBRARY_PATH}"
-    printf '  dry-run: export DYLD_FALLBACK_LIBRARY_PATH=%s\n' "${DYLD_FALLBACK_LIBRARY_PATH}"
-  fi
-}
-
 install_homebrew_if_missing() {
   local brew_bin
 
@@ -201,7 +183,6 @@ install_homebrew_if_missing() {
   NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
   if activate_homebrew; then
-    configure_homebrew_python_library_paths
     log_ok "Homebrew installed and activated for this shell"
   else
     die "Homebrew installation finished but brew was not found; open a new terminal or run /opt/homebrew/bin/brew shellenv, then rerun Hatch"
@@ -291,8 +272,14 @@ cleanup_existing_runtime() {
   log_step "cleanup" "Detecting existing MonoClaw and legacy runtimes"
 
   if have_command monoclaw; then
-    log_action monoclaw gateway stop
-    log_action monoclaw gateway uninstall
+    local monoclaw_venv_bin
+    monoclaw_venv_bin="$(monoclaw_home)/vendor/runtime/venv/bin/monoclaw"
+    if [[ -x "${monoclaw_venv_bin}" ]]; then
+      log_action monoclaw gateway stop
+      log_action monoclaw gateway uninstall
+    else
+      log_warn "monoclaw shim found but runtime venv is missing or incomplete; skipping gateway cleanup"
+    fi
   else
     log_ok "monoclaw command not found"
   fi
@@ -391,13 +378,8 @@ select_runtime_python() {
   candidates+=("${home_dir}/vendor/python/current/bin/python3.12")
   candidates+=("${home_dir}/vendor/python/current/bin/python3.11")
 
-  if [[ "${HATCH_ALLOW_SYSTEM_RUNTIME_PYTHON:-0}" == "1" ]]; then
-    for candidate in python3.13 python3.12 python3.11 python3; do
-      if have_command "${candidate}"; then
-        candidates+=("$(command -v "${candidate}")")
-      fi
-    done
-  fi
+  # HATCH_ALLOW_SYSTEM_RUNTIME_PYTHON has been moved to hatch-diagnostics.
+  # The production install path is bundle-only per hatch/CLAUDE.md policy.
 
   for candidate in "${candidates[@]}"; do
     if python_satisfies_runtime "${candidate}"; then
@@ -627,12 +609,10 @@ bootstrap_runtime() {
       pip_install_base=("${venv_dir}/bin/python" -m pip install --no-index --find-links "${wheelhouse}")
       log_action "${pip_install_base[@]}" --upgrade pip setuptools wheel
       log_action "${pip_install_base[@]}" "${package_spec}"
-    elif [[ "${HATCH_ALLOW_RUNTIME_NETWORK_FALLBACK:-0}" == "1" ]]; then
-      log_warn "No bundled wheelhouse found; resolving local-office dependencies from the network because HATCH_ALLOW_RUNTIME_NETWORK_FALLBACK=1"
-      log_action "${venv_dir}/bin/python" -m pip install --upgrade pip setuptools wheel
-      log_action "${venv_dir}/bin/python" -m pip install "${package_spec}"
     else
-      warn_or_die "Bundled wheelhouse is required for production runtime bootstrap"
+      # HATCH_ALLOW_RUNTIME_NETWORK_FALLBACK has been moved to hatch-diagnostics.
+      # Production installs require a bundled wheelhouse — no live PyPI access.
+      warn_or_die "Bundled wheelhouse is required for production runtime bootstrap; rebuild with build.sh"
     fi
     write_monoclaw_shim "${HOME}" "${venv_dir}"
     return
@@ -646,12 +626,10 @@ bootstrap_runtime() {
   if [[ -d "${wheelhouse}" ]] && [[ -n "$(ls -A "${wheelhouse}" 2>/dev/null || true)" ]]; then
     "${venv_dir}/bin/python" -m pip install --no-index --find-links "${wheelhouse}" --upgrade pip setuptools wheel
     "${venv_dir}/bin/python" -m pip install --no-index --find-links "${wheelhouse}" "${package_spec}"
-  elif [[ "${HATCH_ALLOW_RUNTIME_NETWORK_FALLBACK:-0}" == "1" ]]; then
-    log_warn "No bundled wheelhouse found; resolving local-office dependencies from the network because HATCH_ALLOW_RUNTIME_NETWORK_FALLBACK=1"
-    "${venv_dir}/bin/python" -m pip install --upgrade pip setuptools wheel
-    "${venv_dir}/bin/python" -m pip install "${package_spec}"
   else
-    die "Bundled wheelhouse is required for production runtime bootstrap"
+    # Production path: wheelhouse is required. HATCH_ALLOW_RUNTIME_NETWORK_FALLBACK
+    # has been removed from this path and moved to hatch-diagnostics for repair use only.
+    die "Bundled wheelhouse is required for production runtime bootstrap; rebuild the bundle with build.sh on the assembly machine"
   fi
   log_ok "MonoClaw runtime installed into ${venv_dir}"
   write_monoclaw_shim "${HOME}" "${venv_dir}"
@@ -736,15 +714,8 @@ print_technician_handoff() {
   log_step "install" "Technician handoff"
   printf '  next: open a new terminal or run: export PATH="%s/.local/bin:$PATH"\n' "${HOME}"
   printf '  next: verify runtime with: monoclaw --version\n'
-  printf '  next: run monoclaw setup\n'
-
-  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
-    printf '  dry-run: offer to run monoclaw setup when a TTY is available\n'
-  elif [[ -t 0 && -t 1 ]]; then
-    printf '  info: setup wizard not started automatically; run monoclaw setup after install\n'
-  else
-    printf '  info: no interactive TTY detected; run monoclaw setup manually after install\n'
-  fi
+  printf '  next: complete setup with: monoclaw provision\n'
+  printf '        (install.sh will prompt to run this automatically when a TTY is available)\n'
 }
 
 run_install() {
@@ -765,31 +736,39 @@ run_install() {
 
 run_verify() {
   local home_dir
+  local monoclaw_bin
   home_dir="$(monoclaw_home)"
 
   log_step "verify" "Checking first-run readiness"
+
+  # ── File/directory presence (structural) ────────────────────────────────
   if [[ -d "${home_dir}" ]]; then
     log_ok "MonoClaw home exists at ${home_dir}"
   else
-    log_warn "MonoClaw home does not exist yet"
+    warn_or_die "MonoClaw home does not exist at ${home_dir}"
   fi
 
   if [[ -d "${home_dir}/vendor/runtime" ]]; then
     log_ok "vendor runtime assets present"
   else
-    log_warn "vendor runtime assets are missing"
+    warn_or_die "vendor runtime assets are missing"
   fi
 
   if [[ -x "${home_dir}/vendor/runtime/venv/bin/monoclaw" ]]; then
     log_ok "monoclaw venv entrypoint present"
   else
-    log_warn "monoclaw venv entrypoint is missing"
+    warn_or_die "monoclaw venv entrypoint is missing"
   fi
 
   if [[ -x "${HOME}/.local/bin/monoclaw" ]]; then
-    log_ok "monoclaw command shim present"
+    monoclaw_bin="${HOME}/.local/bin/monoclaw"
+    log_ok "monoclaw command shim present at ${monoclaw_bin}"
+  elif [[ -x "${home_dir}/vendor/runtime/venv/bin/monoclaw" ]]; then
+    monoclaw_bin="${home_dir}/vendor/runtime/venv/bin/monoclaw"
+    log_warn "monoclaw shim at ${HOME}/.local/bin/monoclaw missing; using venv directly"
   else
-    log_warn "monoclaw command shim is missing"
+    warn_or_die "monoclaw command not found; check PATH and venv"
+    monoclaw_bin=""
   fi
 
   if [[ -f "${home_dir}/vendor/hatch-manifest.json" ]]; then
@@ -808,6 +787,83 @@ run_verify() {
     log_ok "logs directory is writable"
   else
     log_warn "logs directory is missing or not writable"
+  fi
+
+  # ── Behavioral smoke probes ──────────────────────────────────────────────
+  # These fail the verify step rather than just warning, because a successful
+  # file-presence check that hides a broken runtime is worse than no check.
+  if [[ -z "${monoclaw_bin:-}" ]]; then
+    warn_or_die "Skipping behavioral probes: monoclaw binary not found"
+    return
+  fi
+
+  # Layered behavioral probes:
+  #   1) import the wheel directly from the runtime venv (catches missing
+  #      module / broken install / wrong-Python-version cases with a cleaner
+  #      error than a full CLI entrypoint failure).
+  #   2) run `monoclaw --version` (catches entry_point wiring and minimal
+  #      transitive-dep load).
+  #   3) run `monoclaw doctor --json` (full health check).
+  local venv_python="${home_dir}/vendor/runtime/venv/bin/python"
+  if [[ -x "${venv_python}" ]]; then
+    log_step "verify" "Importing monoclaw_runtime from the runtime venv"
+    local import_out=""
+    local import_exit=0
+    import_out="$(hatch_run_with_timeout 10 "${venv_python}" -c 'import monoclaw_runtime; print(getattr(monoclaw_runtime, "__version__", "unknown"))' 2>&1)" || import_exit=$?
+    if [[ "${import_exit}" -eq 0 ]]; then
+      log_ok "monoclaw_runtime imported (version ${import_out})"
+    elif [[ "${import_exit}" -eq 124 ]]; then
+      warn_or_die "monoclaw_runtime import timed out after 10s (venv may be corrupted)"
+      return
+    else
+      warn_or_die "monoclaw_runtime import failed (exit ${import_exit}): ${import_out}. Reinstall the runtime wheel into ${home_dir}/vendor/runtime/venv."
+      return
+    fi
+  else
+    log_warn "Skipping monoclaw_runtime import probe: venv python not found at ${venv_python}"
+  fi
+
+  log_step "verify" "Running monoclaw --version smoke probe"
+  local version_out=""
+  local version_exit=0
+  version_out="$(hatch_run_with_timeout 15 "${monoclaw_bin}" --version 2>&1)" || version_exit=$?
+  if [[ "${version_exit}" -eq 0 ]]; then
+    log_ok "monoclaw --version: ${version_out}"
+  elif [[ "${version_exit}" -eq 124 ]]; then
+    warn_or_die "monoclaw --version timed out after 15s"
+    return
+  else
+    warn_or_die "monoclaw --version failed (exit ${version_exit}): ${version_out}"
+    return
+  fi
+
+  log_step "verify" "Running monoclaw doctor --json probe"
+  local doctor_out=""
+  local doctor_exit=0
+  doctor_out="$(hatch_run_with_timeout 30 "${monoclaw_bin}" doctor --json 2>&1)" || doctor_exit=$?
+  if [[ "${doctor_exit}" -eq 0 ]]; then
+    log_ok "monoclaw doctor: all essential checks green"
+  elif [[ "${doctor_exit}" -eq 124 ]]; then
+    warn_or_die "monoclaw doctor --json timed out after 30s. Check ${home_dir}/logs/agent.log."
+  else
+    # Extract key details from JSON if possible; fall back to raw output.
+    local issues_summary=""
+    if command -v python3 >/dev/null 2>&1; then
+      issues_summary="$(printf '%s' "${doctor_out}" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    issues = d.get('issues', [])
+    print('; '.join(issues[:3]))
+except Exception:
+    print(sys.stdin.read()[:200])
+" 2>/dev/null || true)"
+    fi
+    if [[ -n "${issues_summary}" ]]; then
+      warn_or_die "monoclaw doctor reported issues: ${issues_summary}. Run 'monoclaw provision' to fix."
+    else
+      warn_or_die "monoclaw doctor --json exited ${doctor_exit}. Run 'monoclaw provision' to fix."
+    fi
   fi
 }
 
@@ -972,7 +1028,7 @@ run_install_tools() {
   install_tools_pack_plugins "${HATCH_TOOLS_PACK_ROOT}/plugins" "${home_dir}/plugins"
   printf '  manual: review %s before enabling host automation tools\n' "${target_dir}/docs/permissions.md"
   printf '  manual: copy MCP examples from %s only after reviewing path and permission scopes\n' "${target_dir}/config"
-  printf '  next: run monoclaw setup system to review Mona permissions, MCP templates, and tool activation\n'
+  printf '  next: run monoclaw provision to complete first-run onboarding (Mona permissions, MCP templates, tool activation, model setup)\n'
   if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
     printf '  dry-run: Mona secretary tools installed at %s\n' "${target_dir}"
   else
@@ -1402,6 +1458,48 @@ PY
   else
     log_ok "skill readiness audit passed"
   fi
+
+  # ── Binary smoke probes for installed skill-deps ──────────────────────────
+  # Verify that each installed skill-dep binary actually runs, not just that
+  # the file is present with the right SHA. A binary that exists but fails its
+  # status/health command (e.g. remindctl before macOS Reminders authorization)
+  # needs to be surfaced here so the technician can authorize it before handing
+  # off to the customer.
+  local skill_deps_bin="${home_dir}/vendor/skill-deps/bin"
+  if [[ -d "${skill_deps_bin}" ]]; then
+    log_step "skill-readiness" "Probing installed skill-dep binaries"
+    # Format: "<binary_name>:<space-separated argv after the binary>".
+    # ``imsg`` does NOT have a ``health`` subcommand (the previous spelling
+    # used here was wrong and surfaced as a misleading warning on every
+    # fresh install). The canonical readiness probe for ``imsg`` is
+    # ``chats --limit 1 --json`` — the same command the runtime's
+    # ``SkillDepsModule`` activation flow uses and the same command the
+    # Phase-3 ``imsg`` sub-wizard exercises in ``verify()``.
+    local _probe_spec _probe_binary _probe_args_str _probe_out _probe_exit
+    local -a _probe_argv
+    for _probe_spec in \
+        "remindctl:status" \
+        "imsg:chats --limit 1 --json" \
+        "memo:--version" \
+        "himalaya:--version"; do
+      _probe_binary="${skill_deps_bin}/${_probe_spec%%:*}"
+      _probe_args_str="${_probe_spec#*:}"
+      [[ -x "${_probe_binary}" ]] || continue
+      # shellcheck disable=SC2206
+      read -ra _probe_argv <<< "${_probe_args_str}"
+      _probe_out=""
+      _probe_exit=0
+      _probe_out="$(hatch_run_with_timeout 10 "${_probe_binary}" "${_probe_argv[@]}" 2>&1)" || _probe_exit=$?
+      if [[ ${_probe_exit} -eq 0 ]]; then
+        log_ok "${_probe_spec%%:*}: ${_probe_args_str} → OK"
+      else
+        log_warn "${_probe_spec%%:*}: '${_probe_args_str}' exited ${_probe_exit} — binary may need authorization via 'monoclaw provision'"
+        if [[ -n "${_probe_out}" ]]; then
+          printf '    %s\n' "${_probe_out}" | head -5
+        fi
+      fi
+    done
+  fi
 }
 
 run_install_skill_deps() {
@@ -1425,11 +1523,132 @@ run_install_skill_deps() {
   else
     install_skill_deps_python_tools "${target_dir}" "${target_dir}" "${home_dir}"
   fi
+  install_class_a_brew_formulas
+  run_install_core_deps
   if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
     printf '  dry-run: skill dependencies installed at %s\n' "${target_dir}"
   else
     log_ok "skill dependencies installed at ${target_dir}"
   fi
+}
+
+# ---------------------------------------------------------------------------
+# Class-A brew formula installation
+#
+# Per ``plans/provision-sub-wizards-and-homebrew-pivot.md`` (and the new
+# section in ``CLAUDE.md``), each Class-A skill-dep tool is **brew-first when
+# online, bundle-fallback offline**. The bundle copy in
+# ``run_install_skill_deps`` runs unconditionally so air-gapped installs keep
+# working — this helper layers an opportunistic ``brew install`` on top so
+# technicians get the idiomatic brew binaries on their PATH and can upgrade
+# them with ``brew upgrade`` instead of re-bundling.
+#
+# Skipped when:
+#   * ``HATCH_INSTALL_OFFLINE=1`` is set (explicit air-gap mode).
+#   * ``HATCH_INSTALL_BREW_FORMULAS=0`` is set (technician opt-out).
+#   * ``brew`` is not on PATH (target Mac is bundle-only).
+#
+# Class-B tools (today: ``imsg``) have no brew formula and are intentionally
+# absent from the list — the bundle copy is their only install path.
+# ---------------------------------------------------------------------------
+install_class_a_brew_formulas() {
+  if [[ "${HATCH_INSTALL_OFFLINE:-0}" == "1" ]]; then
+    log_step "skill-deps:brew" "HATCH_INSTALL_OFFLINE=1; skipping brew install (bundle-only)"
+    return
+  fi
+  if [[ "${HATCH_INSTALL_BREW_FORMULAS:-1}" == "0" ]]; then
+    log_step "skill-deps:brew" "HATCH_INSTALL_BREW_FORMULAS=0; skipping brew install"
+    return
+  fi
+  if ! have_command brew; then
+    log_step "skill-deps:brew" "brew not on PATH; skipping brew install (using bundled binaries only)"
+    return
+  fi
+
+  log_step "skill-deps:brew" "Installing Class-A brew formulas (idempotent)"
+  # Each entry is "<tool>|<brew_spec>". The tool name is informational
+  # (matches the bundled binary basename); the spec is what we pass to
+  # ``brew install``. Memo MUST use the antoniorodr tap because the bare
+  # name ``memo`` resolves to a deprecated cask in homebrew/core.
+  local entry tool spec
+  for entry in \
+      "himalaya|himalaya" \
+      "remindctl|steipete/tap/remindctl" \
+      "memo|antoniorodr/memo/memo"; do
+    tool="${entry%%|*}"
+    spec="${entry#*|}"
+    if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+      printf '  dry-run: brew install --quiet %s   # (%s, idempotent)\n' "${spec}" "${tool}"
+      continue
+    fi
+    if brew install --quiet "${spec}"; then
+      log_ok "skill-deps:brew ${tool}: '${spec}' installed (or already up to date)"
+    else
+      log_warn "skill-deps:brew ${tool}: 'brew install ${spec}' failed; falling back to bundled binary"
+    fi
+  done
+}
+
+# ---------------------------------------------------------------------------
+# Class-C / Class-D core dependencies
+#
+# Per ``plans/provision-sub-wizards-and-homebrew-pivot.md`` §4.5–4.8 and
+# §5.2: language runtimes (``node``/``npm``, ``uv``) and system libraries
+# (``opus``, ``ffmpeg``) are brew-only on macOS in this iteration. The
+# runtime venv stays bundle-first per ``CLAUDE.md`` — this helper does NOT
+# touch Python in any form.
+#
+# Skipped under the same gates as ``install_class_a_brew_formulas``:
+#   * ``HATCH_INSTALL_OFFLINE=1`` — air-gap mode.
+#   * ``HATCH_INSTALL_CORE_DEPS=0`` — technician opt-out specific to this
+#     helper. Distinct from ``HATCH_INSTALL_BREW_FORMULAS=0`` so a
+#     technician can keep core deps while opting out of the Class-A
+#     formulas, or vice versa.
+#   * brew missing from PATH.
+#
+# This runs only when ``HATCH_INSTALL_CORE_DEPS_ON_INSTALL`` is set (default:
+# disabled) to preserve the existing top-level install behaviour. When
+# enabled, the runtime sub-wizards still re-detect and can install on
+# demand during ``monoclaw provision`` — Hatch is the first opportunity,
+# not the only one.
+# ---------------------------------------------------------------------------
+run_install_core_deps() {
+  if [[ "${HATCH_INSTALL_OFFLINE:-0}" == "1" ]]; then
+    log_step "core-deps" "HATCH_INSTALL_OFFLINE=1; skipping (monoclaw provision will detect and prompt later)"
+    return
+  fi
+  if [[ "${HATCH_INSTALL_CORE_DEPS:-1}" == "0" ]]; then
+    log_step "core-deps" "HATCH_INSTALL_CORE_DEPS=0; skipping"
+    return
+  fi
+  if ! have_command brew; then
+    log_step "core-deps" "brew not on PATH; skipping (install via monoclaw provision after Homebrew is set up)"
+    return
+  fi
+
+  log_step "core-deps" "Installing Class-C language runtimes and Class-D system libraries (idempotent)"
+  # Format: "<spec>|<friendly description>".
+  # ``node`` bundles ``npm``; we don't list it separately. ``opus`` is a
+  # system library — brew install lays down ``libopus.dylib`` under the
+  # active prefix, which the runtime's ``opus`` sub-wizard then verifies.
+  local entry spec description
+  for entry in \
+      "node|Node.js LTS (+npm)" \
+      "uv|Astral uv (Python env manager)" \
+      "opus|Opus codec (Discord voice)" \
+      "ffmpeg|ffmpeg (TTS playback, voice mode)"; do
+    spec="${entry%%|*}"
+    description="${entry#*|}"
+    if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+      printf '  dry-run: brew install --quiet %s   # (%s, idempotent)\n' "${spec}" "${description}"
+      continue
+    fi
+    if brew install --quiet "${spec}"; then
+      log_ok "core-deps ${spec}: installed (or already up to date) — ${description}"
+    else
+      log_warn "core-deps ${spec}: 'brew install ${spec}' failed; monoclaw provision will surface this later"
+    fi
+  done
 }
 
 run_doctor() {
@@ -1476,6 +1695,9 @@ case "${COMMAND}" in
     ;;
   install-skill-deps)
     run_install_skill_deps
+    ;;
+  install-core-deps)
+    run_install_core_deps
     ;;
   verify-skill-readiness)
     run_verify_skill_readiness

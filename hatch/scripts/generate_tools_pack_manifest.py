@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -69,7 +70,67 @@ def collect_artifacts(root: Path) -> list[dict[str, object]]:
     return artifacts
 
 
+_VERIFY_OPTIONAL_KEYS = (
+    "verify_command",
+    "verify_strict",
+    "verify_env",
+    "verify_skip_reason",
+)
+
+
+def _validate_verify_fields(name: str, entry: dict[str, object]) -> None:
+    """Reject illegal verify_* combinations before they reach the manifest."""
+
+    has_cmd = entry.get("verify_command") not in (None, [])
+    has_skip = bool(entry.get("verify_skip_reason"))
+    if has_cmd and has_skip:
+        raise SystemExit(
+            f"tool {name!r} sets both verify_command and verify_skip_reason "
+            "(mutually exclusive)"
+        )
+    cmd = entry.get("verify_command")
+    if cmd is not None:
+        if not isinstance(cmd, list) or not cmd or not all(
+            isinstance(part, str) for part in cmd
+        ):
+            raise SystemExit(
+                f"tool {name!r} verify_command must be a non-empty list of strings"
+            )
+    strict = entry.get("verify_strict")
+    if strict is not None and not isinstance(strict, bool):
+        raise SystemExit(f"tool {name!r} verify_strict must be a boolean")
+    env = entry.get("verify_env")
+    if env is not None:
+        if not isinstance(env, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in env.items()
+        ):
+            raise SystemExit(
+                f"tool {name!r} verify_env must be an object of string->string"
+            )
+    skip = entry.get("verify_skip_reason")
+    if skip is not None and (not isinstance(skip, str) or not skip.strip()):
+        raise SystemExit(
+            f"tool {name!r} verify_skip_reason must be a non-empty string"
+        )
+
+
+def _check_pack_path(name: str, rel_path: str, root: Path) -> Path:
+    raw_path = root / rel_path
+    path = raw_path.resolve(strict=False)
+    if path != root and root not in path.parents:
+        raise SystemExit(f"tool {name!r} artifact escapes pack root: {rel_path}")
+    if is_ignored_metadata(path, root):
+        raise SystemExit(
+            f"tool {name!r} artifact points to ignored metadata: {rel_path}"
+        )
+    if not path.is_file():
+        raise SystemExit(f"tool {name!r} artifact missing: {rel_path}")
+    return path
+
+
 def parse_tool(value: str, root: Path) -> dict[str, object]:
+    """Parse a colon-encoded --tool string (legacy)."""
+
     parts = value.split(":", 5)
     if len(parts) != 5:
         raise SystemExit(
@@ -78,14 +139,7 @@ def parse_tool(value: str, root: Path) -> dict[str, object]:
     name, version, rel_path, activation, permissions = [part.strip() for part in parts]
     if not name or not version or not rel_path or not activation:
         raise SystemExit("--tool fields must be non-empty")
-    raw_path = root / rel_path
-    path = raw_path.resolve(strict=False)
-    if path != root and root not in path.parents:
-        raise SystemExit(f"tool artifact escapes pack root: {rel_path}")
-    if is_ignored_metadata(path, root):
-        raise SystemExit(f"tool artifact points to ignored metadata: {rel_path}")
-    if not path.is_file():
-        raise SystemExit(f"tool artifact missing: {rel_path}")
+    path = _check_pack_path(name, rel_path, root)
     return {
         "name": name,
         "version": version,
@@ -99,6 +153,53 @@ def parse_tool(value: str, root: Path) -> dict[str, object]:
     }
 
 
+def parse_tools_file(path: Path, root: Path) -> list[dict[str, object]]:
+    """Parse a JSON tools descriptor file.
+
+    Each entry must declare name, version, path, activation,
+    required_permissions. Optional verify_command, verify_strict,
+    verify_env, verify_skip_reason are validated and passed through.
+    """
+
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"--tools-file is not valid JSON: {path} ({exc})") from None
+    if not isinstance(raw, list):
+        raise SystemExit("--tools-file must contain a JSON list of tool objects")
+    tools: list[dict[str, object]] = []
+    for index, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            raise SystemExit(f"--tools-file entry {index} is not an object")
+        for required in ("name", "version", "path", "activation", "required_permissions"):
+            if required not in entry or entry[required] in (None, "", []):
+                raise SystemExit(
+                    f"--tools-file entry {index} missing required field {required!r}"
+                )
+        if not isinstance(entry["required_permissions"], list) or not all(
+            isinstance(perm, str) and perm for perm in entry["required_permissions"]
+        ):
+            raise SystemExit(
+                f"--tools-file entry {index} required_permissions must be a list of non-empty strings"
+            )
+        name = str(entry["name"]).strip()
+        rel_path = str(entry["path"]).strip()
+        path_resolved = _check_pack_path(name, rel_path, root)
+        normalized: dict[str, object] = {
+            "name": name,
+            "version": str(entry["version"]).strip(),
+            "path": path_resolved.relative_to(root).as_posix(),
+            "activation": str(entry["activation"]).strip(),
+            "required_permissions": list(entry["required_permissions"]),
+        }
+        for key in _VERIFY_OPTIONAL_KEYS:
+            if key in entry:
+                normalized[key] = entry[key]
+        _validate_verify_fields(name, normalized)
+        tools.append(normalized)
+    return tools
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tools-pack-root", required=True)
@@ -107,7 +208,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target-arch", required=True)
     parser.add_argument("--node-version", default="")
     parser.add_argument("--node-path", default="node/current/bin/node")
-    parser.add_argument("--tool", action="append", default=[])
+    parser.add_argument(
+        "--tool",
+        action="append",
+        default=[],
+        help="(deprecated) Legacy colon-encoded tool descriptor. "
+        "Prefer --tools-file for new schemas including verify_command.",
+    )
+    parser.add_argument(
+        "--tools-file",
+        default=None,
+        help="Path to a JSON file containing a list of tool descriptors. "
+        "Supports verify_command, verify_strict, verify_env, verify_skip_reason.",
+    )
     return parser.parse_args()
 
 
@@ -138,7 +251,23 @@ def main() -> None:
             "path": node_rel_path,
         }
 
-    tools = [parse_tool(tool, root) for tool in args.tool]
+    tools: list[dict[str, object]] = []
+    if args.tools_file:
+        if args.tool:
+            raise SystemExit(
+                "use either --tools-file or --tool, not both "
+                "(--tool is the legacy colon-encoded path)"
+            )
+        tools.extend(parse_tools_file(Path(args.tools_file).resolve(), root))
+    else:
+        if args.tool:
+            print(
+                "[generate_tools_pack_manifest] warn: --tool colon-encoded "
+                "args are deprecated; migrate to --tools-file to declare "
+                "verify_command/verify_strict/verify_env/verify_skip_reason.",
+                file=sys.stderr,
+            )
+        tools.extend(parse_tool(tool, root) for tool in args.tool)
     manifest = {
         "schema_version": 1,
         "created_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),

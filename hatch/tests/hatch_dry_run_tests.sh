@@ -112,6 +112,11 @@ run_hatch() {
   PATH="/usr/bin:/bin:/usr/sbin:/sbin" HOME="${HOME_DIR}" HATCH_FORCE_HOMEBREW_MISSING=1 HATCH_RUNTIME_PYTHON="${FAKE_PYTHON}" "${ROOT}/bin/hatch" --dry-run --bundle-root "${BUNDLE}" "$@"
 }
 
+# Variant that includes the home dir's .local/bin so have_command monoclaw can find the shim.
+run_hatch_with_local_bin() {
+  PATH="${HOME_DIR}/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin" HOME="${HOME_DIR}" HATCH_FORCE_HOMEBREW_MISSING=1 HATCH_RUNTIME_PYTHON="${FAKE_PYTHON}" "${ROOT}/bin/hatch" --dry-run --bundle-root "${BUNDLE}" "$@"
+}
+
 run_hatch_default() {
   PATH="/usr/bin:/bin:/usr/sbin:/sbin" HOME="${HOME_DIR}" HATCH_FORCE_HOMEBREW_MISSING=1 HATCH_RUNTIME_PYTHON="${FAKE_PYTHON}" "${ROOT}/bin/hatch" --bundle-root "${BUNDLE}" "$@"
 }
@@ -160,7 +165,7 @@ if grep -q "lmstudio.ai/install.sh" "${TMP}/install.out"; then
   printf 'install should not script LM Studio installation\n' >&2
   exit 1
 fi
-grep -q "run monoclaw setup" "${TMP}/install.out"
+grep -q "run monoclaw provision" "${TMP}/install.out"
 
 run_hatch_with_broken_ensurepip install | tee "${TMP}/install-broken-ensurepip.out"
 grep -q "Bundled Python failed to create a pip-capable venv; rebuild the bundle with a working Python runtime" "${TMP}/install-broken-ensurepip.out"
@@ -215,6 +220,22 @@ printf 'skill placeholder\n' > "${HOME_DIR}/.monoclaw/skills/customer-office/SKI
 run_hatch install | tee "${TMP}/existing-config-install.out"
 grep -q "dry-run: keep existing ${HOME_DIR}/.monoclaw/.env" "${TMP}/existing-config-install.out"
 grep -q "dry-run: keep existing ${HOME_DIR}/.monoclaw/config.yaml" "${TMP}/existing-config-install.out"
+
+# Regression: broken shim (shim exists but venv binary absent) must not crash cleanup.
+# This reproduces the scenario where a previous install failed at the pip step (e.g.
+# a missing wheel), leaving install_runtime_assets having deleted the old venv while
+# write_monoclaw_shim was never re-run — so the shim still points at a deleted binary.
+rm -f "${HOME_DIR}/.monoclaw/vendor/runtime/venv/bin/monoclaw"
+run_hatch_with_local_bin install | tee "${TMP}/broken-shim-install.out"
+grep -q "monoclaw shim found but runtime venv is missing or incomplete; skipping gateway cleanup" "${TMP}/broken-shim-install.out"
+if grep -q "dry-run: monoclaw gateway stop" "${TMP}/broken-shim-install.out"; then
+  printf 'FAIL: gateway stop must not be attempted when venv binary is absent\n' >&2
+  exit 1
+fi
+grep -q "dry-run: mkdir -p ${HOME_DIR}/.monoclaw/vendor" "${TMP}/broken-shim-install.out"
+# Restore venv binary for subsequent tests.
+printf '#!/usr/bin/env bash\nprintf "monoclaw 0.0.0-test\\n"\n' > "${HOME_DIR}/.monoclaw/vendor/runtime/venv/bin/monoclaw"
+chmod +x "${HOME_DIR}/.monoclaw/vendor/runtime/venv/bin/monoclaw"
 
 run_hatch verify | tee "${TMP}/verify.out"
 grep -q "MonoClaw home exists" "${TMP}/verify.out"

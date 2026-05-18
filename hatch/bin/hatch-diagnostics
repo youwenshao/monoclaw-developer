@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# hatch-diagnostics — diagnostic-only Hatch helpers for repair and investigation.
+#
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  WARNING: UNSUPPORTED INSTALL PATH                          ║
+# ║                                                              ║
+# ║  Any install performed through this script produces an       ║
+# ║  UNSUPPORTED configuration. These helpers exist for          ║
+# ║  technician diagnosis only (e.g. when the bundle is          ║
+# ║  partially built and you need to trace a boot failure).      ║
+# ║                                                              ║
+# ║  For a production install, rebuild the bundle with build.sh  ║
+# ║  on the assembly machine and run install.sh on the target.   ║
+# ╚══════════════════════════════════════════════════════════════╝
+#
+# Flags available here and intentionally removed from bin/hatch:
+#
+#   HATCH_ALLOW_SYSTEM_RUNTIME_PYTHON=1
+#     Allows select_runtime_python() to fall back to system/Homebrew
+#     python3.13/3.12/3.11 when no bundled interpreter is found.
+#     Removed from production because it silently selects Apple Python 3.9
+#     or a mismatched Homebrew interpreter, which then fails monoclaw-runtime's
+#     Python >=3.11 requirement with a cryptic pip error.
+#
+#   HATCH_ALLOW_RUNTIME_NETWORK_FALLBACK=1
+#     Allows bootstrap_runtime() to fetch wheels from live PyPI when
+#     vendor/wheelhouse is absent. Removed from production because:
+#     (a) it requires outbound network access on customer Macs,
+#     (b) it fetches unbundled versions, breaking offline reproducibility,
+#     (c) it masks a missing wheelhouse build step on the assembly machine.
+#
+# Usage (repair only):
+#   HATCH_ALLOW_SYSTEM_RUNTIME_PYTHON=1 \
+#   HATCH_ALLOW_RUNTIME_NETWORK_FALLBACK=1 \
+#   bash hatch/bin/hatch --apply --bundle-root /path/to/dist install
+#
+# After a diagnostic install, rebuild the bundle properly on the assembly
+# machine before deploying to customers.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Re-export the diagnostic flags so the real hatch script can see them
+# when called from here. This lets operators set both flags in one place.
+export HATCH_ALLOW_SYSTEM_RUNTIME_PYTHON="${HATCH_ALLOW_SYSTEM_RUNTIME_PYTHON:-1}"
+export HATCH_ALLOW_RUNTIME_NETWORK_FALLBACK="${HATCH_ALLOW_RUNTIME_NETWORK_FALLBACK:-1}"
+
+printf '  DIAGNOSTICS: HATCH_ALLOW_SYSTEM_RUNTIME_PYTHON=%s\n' "${HATCH_ALLOW_SYSTEM_RUNTIME_PYTHON}" >&2
+printf '  DIAGNOSTICS: HATCH_ALLOW_RUNTIME_NETWORK_FALLBACK=%s\n' "${HATCH_ALLOW_RUNTIME_NETWORK_FALLBACK}" >&2
+printf '  DIAGNOSTICS: This produces an unsupported install. Rebuild bundle for production.\n' >&2
+printf '\n' >&2
+
+# Reinstate HATCH_ALLOW_SYSTEM_RUNTIME_PYTHON inside select_runtime_python
+# by monkey-patching the hatch script inline. This avoids modifying the
+# production bin/hatch while still providing the fallback for diagnosis.
+# The patched select_runtime_python is injected into the running shell
+# before sourcing bin/hatch command handlers.
+
+select_runtime_python() {
+  local home_dir="$1"
+  local candidates=()
+
+  if [[ "${HATCH_FORCE_RUNTIME_PYTHON_MISSING:-0}" == "1" ]]; then
+    return 1
+  fi
+
+  if [[ -n "${HATCH_RUNTIME_PYTHON:-}" ]]; then
+    candidates+=("${HATCH_RUNTIME_PYTHON}")
+  fi
+  candidates+=("${home_dir}/vendor/python/current/bin/python3")
+  candidates+=("${home_dir}/vendor/python/current/bin/python3.13")
+  candidates+=("${home_dir}/vendor/python/current/bin/python3.12")
+  candidates+=("${home_dir}/vendor/python/current/bin/python3.11")
+
+  # Diagnostics-only: allow system/Homebrew Python as a fallback
+  if [[ "${HATCH_ALLOW_SYSTEM_RUNTIME_PYTHON:-0}" == "1" ]]; then
+    printf '  warn: falling back to system Python (HATCH_ALLOW_SYSTEM_RUNTIME_PYTHON=1) — UNSUPPORTED\n' >&2
+    for candidate in python3.13 python3.12 python3.11 python3; do
+      if command -v "${candidate}" >/dev/null 2>&1; then
+        candidates+=("$(command -v "${candidate}")")
+      fi
+    done
+  fi
+
+  for candidate in "${candidates[@]}"; do
+    if "${SCRIPT_DIR}/hatch" --print-python-check "${candidate}" 2>/dev/null; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+export -f select_runtime_python
+
+# Pass all arguments through to the real hatch script
+exec bash "${SCRIPT_DIR}/hatch" "$@"

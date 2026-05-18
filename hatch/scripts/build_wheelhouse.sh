@@ -65,4 +65,48 @@ build_wheelhouse() {
   log "Wheelhouse ready at ${HATCH_WHEELHOUSE_ROOT}"
 }
 
+# Verify that the wheelhouse is self-sufficient: simulate an offline install
+# of monoclaw-runtime[local-office] against the wheelhouse with no network
+# access.  If any declared dependency is absent the resolver fails here,
+# on the assembly machine, rather than on the target Mac during install.sh.
+verify_wheelhouse() {
+  log "Verifying wheelhouse is self-sufficient (offline resolve smoke test)"
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+
+  # Create a minimal venv so pip has an isolated site-packages to resolve
+  # against; this avoids pollution from whatever is installed in the bundled
+  # Python's base environment.
+  "${HATCH_WHEELHOUSE_PYTHON}" -m venv "${tmpdir}/verify-venv" 2>/dev/null
+
+  # Upgrade pip inside the venv from the wheelhouse (avoids any network hit).
+  "${tmpdir}/verify-venv/bin/python" -m pip install \
+    --quiet \
+    --no-index --find-links "${HATCH_WHEELHOUSE_ROOT}" \
+    --upgrade pip setuptools wheel
+
+  # Dry-run install: resolves the full dependency tree from the wheelhouse
+  # only.  Exits non-zero if any package is missing — same error the target
+  # Mac would see — so this catches stale wheelhouses before a bundle ships.
+  local resolve_ok=0
+  "${tmpdir}/verify-venv/bin/python" -m pip install \
+      --quiet \
+      --no-index --find-links "${HATCH_WHEELHOUSE_ROOT}" \
+      --dry-run \
+      "${HATCH_RUNTIME_ROOT}[local-office]" 2>&1 || resolve_ok=$?
+
+  rm -rf "${tmpdir}"
+
+  if [[ "${resolve_ok}" -ne 0 ]]; then
+    die "Wheelhouse offline resolve failed — run HATCH_CLEAN_WHEELHOUSE=1 bash scripts/build_wheelhouse.sh to rebuild"
+  fi
+
+  log "Wheelhouse offline resolve: ok"
+}
+
 build_wheelhouse
+if [[ "${HATCH_SKIP_WHEELHOUSE_VERIFY:-0}" == "1" ]]; then
+  log "Skipping wheelhouse offline resolve smoke test (HATCH_SKIP_WHEELHOUSE_VERIFY=1)"
+else
+  verify_wheelhouse
+fi

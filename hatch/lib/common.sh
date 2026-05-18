@@ -34,6 +34,68 @@ have_command() {
   command -v "$1" >/dev/null 2>&1
 }
 
+# Portable wrapper around `timeout`. macOS does not ship a `timeout` binary by
+# default; the GNU coreutils alternative `gtimeout` is only present if the user
+# installed coreutils via Homebrew. Hatch's verify probes need a bounded
+# execution time without taking a hard dependency on Homebrew, so fall back to
+# Perl (always present on macOS) as the last resort.
+#
+# Usage: hatch_run_with_timeout <seconds> <command> [arg ...]
+# Exit code: the command's exit code, or 124 on timeout (matching GNU
+# `timeout`).
+hatch_run_with_timeout() {
+  local seconds="$1"
+  shift
+  if [[ -z "${seconds}" || $# -eq 0 ]]; then
+    printf 'hatch_run_with_timeout: usage: <seconds> <command> [args...]\n' >&2
+    return 2
+  fi
+  if have_command gtimeout; then
+    gtimeout "${seconds}" "$@"
+    return $?
+  fi
+  if have_command timeout; then
+    timeout "${seconds}" "$@"
+    return $?
+  fi
+  if have_command perl; then
+    perl -e '
+      use strict;
+      use warnings;
+      use POSIX ();
+      my $seconds = shift @ARGV;
+      my $pid = fork();
+      if (!defined $pid) {
+        die "fork failed: $!";
+      } elsif ($pid == 0) {
+        # Become session leader so SIGTERM/SIGKILL to -$pid kills the whole
+        # process group, including any shell wrapper'\''s children (e.g. a
+        # nested `sleep` from a stub binary).
+        POSIX::setsid() or die "setsid failed: $!";
+        exec { $ARGV[0] } @ARGV or die "exec failed: $!";
+      }
+      local $SIG{ALRM} = sub {
+        kill "TERM", -$pid;
+        # Give well-behaved children up to 1s to clean up before SIGKILL.
+        for (1..10) {
+          last if waitpid($pid, POSIX::WNOHANG) > 0;
+          select(undef, undef, undef, 0.1);
+        }
+        kill "KILL", -$pid;
+        waitpid $pid, 0;
+        exit 124;
+      };
+      alarm $seconds;
+      waitpid $pid, 0;
+      alarm 0;
+      exit ($? >> 8);
+    ' "${seconds}" "$@"
+    return $?
+  fi
+  printf 'hatch_run_with_timeout: no timeout / gtimeout / perl available; refusing to run unbounded\n' >&2
+  return 127
+}
+
 detect_launch_agent() {
   local label="$1"
   launchctl print "gui/$(id -u)/${label}" >/dev/null 2>&1
@@ -328,16 +390,23 @@ verify_tools_pack_manifest() {
   [[ -f "${manifest}" ]] || die "tools pack manifest not found at ${manifest}"
   python_bin="$(hatch_manifest_python "${HATCH_BUNDLE_ROOT:-}")" || die "Python is required to verify the tools pack manifest"
 
-  PYTHONDONTWRITEBYTECODE=1 HATCH_TOOLS_PACK_ROOT="${pack_root}" HATCH_EXPECTED_PACK_ID="${expected_pack_id}" HATCH_HOST_ARCH="$(uname -m)" "${python_bin}" <<'PY'
+  PYTHONDONTWRITEBYTECODE=1 \
+    HATCH_TOOLS_PACK_ROOT="${pack_root}" \
+    HATCH_EXPECTED_PACK_ID="${expected_pack_id}" \
+    HATCH_HOST_ARCH="$(uname -m)" \
+    HATCH_TOOLS_PACK_STRICT_VERIFY="${HATCH_TOOLS_PACK_STRICT_VERIFY:-0}" \
+    "${python_bin}" <<'PY'
 import hashlib
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 root = Path(os.environ["HATCH_TOOLS_PACK_ROOT"]).resolve()
 expected_pack_id = os.environ.get("HATCH_EXPECTED_PACK_ID", "mona-secretary-tools")
 host_arch = os.environ.get("HATCH_HOST_ARCH", "")
+strict_verify = os.environ.get("HATCH_TOOLS_PACK_STRICT_VERIFY", "0").strip().lower() in ("1", "true", "yes", "on")
 manifest_path = root / "tools-pack-manifest.json"
 data = json.loads(manifest_path.read_text(encoding="utf-8"))
 
@@ -411,6 +480,96 @@ for tool in data["tools"]:
     tool_path = safe_path(tool["path"])
     if not tool_path.is_file():
         raise SystemExit(f"tools pack tool file missing: {tool['path']}")
+
+    name = tool["name"]
+    verify_cmd = tool.get("verify_command")
+    verify_strict_flag = bool(tool.get("verify_strict", False))
+    verify_skip_reason = tool.get("verify_skip_reason")
+    verify_env_overrides = tool.get("verify_env")
+
+    if verify_cmd not in (None, []) and verify_skip_reason:
+        raise SystemExit(
+            f"tools pack tool {name!r} sets both verify_command and "
+            f"verify_skip_reason (mutually exclusive)"
+        )
+    if verify_env_overrides is not None and not isinstance(verify_env_overrides, dict):
+        raise SystemExit(
+            f"tools pack tool {name!r} verify_env must be an object of string->string"
+        )
+
+    if verify_cmd and isinstance(verify_cmd, list) and len(verify_cmd) > 0:
+        # Substitute {bin} placeholder with the actual binary path.
+        resolved_cmd = [str(tool_path) if arg == "{bin}" else arg for arg in verify_cmd]
+        env = os.environ.copy()
+        if isinstance(verify_env_overrides, dict):
+            for env_key, env_value in verify_env_overrides.items():
+                if not isinstance(env_key, str) or not isinstance(env_value, str):
+                    raise SystemExit(
+                        f"tools pack tool {name!r} verify_env keys/values must be strings"
+                    )
+                env[env_key] = env_value
+        try:
+            result = subprocess.run(
+                resolved_cmd, capture_output=True, text=True, timeout=10, env=env
+            )
+        except FileNotFoundError:
+            # Binary missing / not executable is always a pack-integrity failure.
+            raise SystemExit(
+                f"tools pack binary not executable: {tool['path']} (verify: {verify_cmd})"
+            )
+        except subprocess.TimeoutExpired:
+            message = f"  warn: {name} verify_command timed out (non-fatal)"
+            if verify_strict_flag and strict_verify:
+                raise SystemExit(
+                    f"tools pack {name} verify_command timed out under "
+                    f"HATCH_TOOLS_PACK_STRICT_VERIFY=1 (verify: {verify_cmd})"
+                )
+            print(message, file=sys.stderr)
+        except Exception as exc:
+            message = f"  warn: {name} verify_command error: {exc}"
+            if verify_strict_flag and strict_verify:
+                raise SystemExit(
+                    f"tools pack {name} verify_command failed under "
+                    f"HATCH_TOOLS_PACK_STRICT_VERIFY=1: {exc}"
+                )
+            print(message, file=sys.stderr)
+        else:
+            if result.returncode != 0:
+                # `verify_strict: true` tools are expected to be self-contained
+                # (no host permissions, no external state). Fail closed at install
+                # time too because the binary itself is broken. The strict-build
+                # env var also upgrades any non-zero exit on a strict probe to a
+                # hard fail (covers strict-true tools in lenient install context).
+                detail = (result.stderr or result.stdout or "").strip()
+                if verify_strict_flag:
+                    raise SystemExit(
+                        f"tools pack {name} verify_command exited {result.returncode} "
+                        f"(strict probe, no host-permission dependency expected); "
+                        f"output: {detail or '(empty)'}"
+                    )
+                print(
+                    f"  warn: {name} verify_command exited {result.returncode} "
+                    f"(permissions may require 'monoclaw setup system')",
+                    file=sys.stderr,
+                )
+    elif verify_skip_reason:
+        # Honestly silenced: the manifest declares why no probe runs.
+        print(
+            f"  info: {name} verify skipped: {verify_skip_reason}",
+            file=sys.stderr,
+        )
+    elif verify_cmd is None:
+        message = (
+            f"  warn: {name} has no verify_command in manifest "
+            f"(add one for behavioral verification, or declare verify_skip_reason)"
+        )
+        if strict_verify:
+            raise SystemExit(
+                f"tools pack {name} is missing verify_command under "
+                f"HATCH_TOOLS_PACK_STRICT_VERIFY=1; declare verify_command "
+                f"(preferred) or verify_skip_reason"
+            )
+        print(message, file=sys.stderr)
 
 if isinstance(node_runtime, dict) and node_runtime.get("path"):
     node_path = node_runtime.get("path", "")

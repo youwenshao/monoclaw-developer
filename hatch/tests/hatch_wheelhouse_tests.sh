@@ -52,6 +52,7 @@ cp "${FAKE_PYTHON}" "${INPUTS}/vendor/python/current/bin/python3"
 HATCH_INPUT_ROOT="${INPUTS}" \
 HATCH_RUNTIME_ROOT="${RUNTIME}" \
 HATCH_FAKE_PIP_LOG="${PIP_LOG}" \
+HATCH_SKIP_WHEELHOUSE_VERIFY=1 \
   bash "${ROOT}/scripts/build_wheelhouse.sh" | tee "${TMP}/wheelhouse.out"
 
 test -f "${INPUTS}/vendor/wheelhouse/fake_dependency-0.0.0-py3-none-any.whl"
