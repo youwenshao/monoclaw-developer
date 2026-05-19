@@ -55,6 +55,21 @@ name = "monoclaw-runtime"
 version = "0.1.0"
 TOML
 
+# Phase 1 verify_node_subsystems.py refuses bundles missing vendor/tui or
+# vendor/whatsapp-bridge. Seed the minimum source files so the staging
+# steps produce what the verifier requires.  See hatch_build_tests.sh
+# for the full helper rationale.
+mkdir -p \
+  "${RUNTIME}/ui-tui/dist" \
+  "${RUNTIME}/ui-tui/packages/monoclaw-ink/dist" \
+  "${RUNTIME}/scripts/whatsapp-bridge"
+printf '{"name":"monoclaw-tui","version":"0.0.1"}\n' > "${RUNTIME}/ui-tui/package.json"
+printf 'console.log("entry")\n' > "${RUNTIME}/ui-tui/dist/entry.js"
+printf 'export {}\n' > "${RUNTIME}/ui-tui/packages/monoclaw-ink/dist/entry-exports.js"
+printf '// bridge\n' > "${RUNTIME}/scripts/whatsapp-bridge/bridge.js"
+printf '{"name":"whatsapp-bridge"}\n' > "${RUNTIME}/scripts/whatsapp-bridge/package.json"
+printf '{"lockfileVersion":3}\n' > "${RUNTIME}/scripts/whatsapp-bridge/package-lock.json"
+
 mkdir -p "${DIST}"
 printf 'prior_bundle_marker\n' > "${DIST}/.prior_bundle_marker"
 

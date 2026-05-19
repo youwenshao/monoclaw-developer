@@ -41,6 +41,26 @@ JSON
 printf 'runtime skill placeholder\n' > "${RUNTIME}/skills/customer-office/SKILL.md"
 printf 'optional skill placeholder\n' > "${RUNTIME}/optional-skills/research/deep-research/SKILL.md"
 printf 'wheel placeholder\n' > "${WHEEL}"
+
+# The Phase 1 ``verify_node_subsystems.py`` gate (May 2026) refuses bundles
+# missing ``vendor/tui/`` or ``vendor/whatsapp-bridge/``. Synthetic RUNTIME
+# fixtures must seed the minimum files ``stage_runtime_tui`` /
+# ``stage_runtime_whatsapp_bridge`` need in order to populate ``dist/vendor/``
+# with what the verifier requires.
+_stage_runtime_node_subsystems_fixture() {
+  local runtime="$1"
+  mkdir -p \
+    "${runtime}/ui-tui/dist" \
+    "${runtime}/ui-tui/packages/monoclaw-ink/dist" \
+    "${runtime}/scripts/whatsapp-bridge"
+  printf '{"name":"monoclaw-tui","version":"0.0.1"}\n' > "${runtime}/ui-tui/package.json"
+  printf 'console.log("entry")\n' > "${runtime}/ui-tui/dist/entry.js"
+  printf 'export {}\n' > "${runtime}/ui-tui/packages/monoclaw-ink/dist/entry-exports.js"
+  printf '// bridge\n' > "${runtime}/scripts/whatsapp-bridge/bridge.js"
+  printf '{"name":"whatsapp-bridge"}\n' > "${runtime}/scripts/whatsapp-bridge/package.json"
+  printf '{"lockfileVersion":3}\n' > "${runtime}/scripts/whatsapp-bridge/package-lock.json"
+}
+_stage_runtime_node_subsystems_fixture "${RUNTIME}"
 cat > "${FAKE_PYTHON}" <<'SH'
 #!/usr/bin/env sh
 if [ "$1" = "-c" ]; then
@@ -346,6 +366,7 @@ cat > "${STANDALONE_RUNTIME}/pyproject.toml" <<'TOML'
 name = "monoclaw-runtime"
 version = "0.1.0"
 TOML
+_stage_runtime_node_subsystems_fixture "${STANDALONE_RUNTIME}"
 
 HATCH_RUNTIME_WHEEL="${STANDALONE_WHEEL}" \
 HATCH_DIST_ROOT="${STANDALONE_DIST}" \

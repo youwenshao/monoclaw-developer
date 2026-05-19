@@ -359,6 +359,78 @@ verify_skill_bundle() {
     --bundle-root "${HATCH_DIST_ROOT}"
 }
 
+stage_runtime_tui() {
+  # Stage ``ui-tui/`` from the runtime source into ``dist/vendor/tui/`` so the
+  # customer Mac can find it after ``install_runtime_assets`` mirrors
+  # ``dist/vendor/`` into ``~/.monoclaw/vendor/``.  Pre-built ``dist/entry.js``
+  # and the ``packages/monoclaw-ink`` bundle are produced on the Hatch host
+  # (Node is already a build-time prereq via ``build_runtime_web_assets``).
+  # First-run ``monoclaw --tui`` on the customer Mac only has to do
+  # ``npm install`` (dependency resolution) — never a full ``npm run build``.
+  #
+  # The May 2026 incident: ``_launch_tui`` in monoclaw_cli/main.py computed
+  # ``tui_dir = PROJECT_ROOT / "ui-tui"`` which in a wheel install resolves
+  # to ``site-packages/ui-tui`` (absent).  Staging here is the canonical
+  # supply path; ``_resolve_tui_dir`` in the runtime checks
+  # ``$MONOCLAW_HOME/vendor/tui/package.json`` as the second resolution rule.
+  local tui_src="${HATCH_RUNTIME_ROOT}/ui-tui"
+  if [[ ! -d "${tui_src}" ]]; then
+    log "warn: runtime ui-tui/ missing; TUI will NOT be bundled (monoclaw --tui will fail)"
+    return 0
+  fi
+
+  if [[ "${HATCH_SKIP_RUNTIME_BUILD:-0}" == "1" ]]; then
+    log "Skipping TUI prebuild because HATCH_SKIP_RUNTIME_BUILD=1; relying on pre-staged dist/"
+  else
+    log "Building TUI (npm ci + npm run build in ${tui_src})"
+    (cd "${tui_src}" && npm ci --no-fund --no-audit --progress=false >/dev/null)
+    (cd "${tui_src}" && npm run build >/dev/null)
+  fi
+
+  if [[ ! -f "${tui_src}/dist/entry.js" ]]; then
+    die "TUI prebuild did not produce ui-tui/dist/entry.js — rebuild with HATCH_SKIP_RUNTIME_BUILD unset"
+  fi
+
+  log "Staging vendor/tui (sources + prebuilt dist; no node_modules)"
+  mkdir -p "${HATCH_DIST_ROOT}/vendor/tui"
+  # rsync excludes the host's node_modules — the customer Mac builds its own
+  # platform-correct tree via npm install at first launch. Also exclude test
+  # output and editor metadata to keep the bundle small.
+  rsync -a --delete \
+    --exclude '/node_modules' \
+    --exclude '/.cache' \
+    --exclude '/coverage' \
+    --exclude '/.vitest' \
+    --exclude '.DS_Store' \
+    "${tui_src}/" "${HATCH_DIST_ROOT}/vendor/tui/"
+}
+
+stage_runtime_whatsapp_bridge() {
+  # Stage ``scripts/whatsapp-bridge/`` into ``dist/vendor/whatsapp-bridge/``.
+  # Sources only — the customer Mac runs ``npm install`` either through Hatch's
+  # ``warm_whatsapp_bridge_install`` step at install time (canonical path) or
+  # the on-demand fallback in ``monoclaw whatsapp`` for dev-mode installs.
+  #
+  # May 2026 incident: ``WhatsAppAdapter._DEFAULT_BRIDGE_DIR`` resolved to
+  # ``site-packages/scripts/whatsapp-bridge`` in wheel installs and crashed
+  # the setup wizard.  ``_resolve_bridge_dir`` in the runtime checks
+  # ``$MONOCLAW_HOME/vendor/whatsapp-bridge/bridge.js`` as the second
+  # resolution rule.
+  local bridge_src="${HATCH_RUNTIME_ROOT}/scripts/whatsapp-bridge"
+  if [[ ! -d "${bridge_src}" ]]; then
+    log "warn: runtime scripts/whatsapp-bridge/ missing; WhatsApp bridge will NOT be bundled"
+    return 0
+  fi
+
+  log "Staging vendor/whatsapp-bridge (sources only; install-time npm install)"
+  mkdir -p "${HATCH_DIST_ROOT}/vendor/whatsapp-bridge"
+  rsync -a --delete \
+    --exclude '/node_modules' \
+    --exclude '/.cache' \
+    --exclude '.DS_Store' \
+    "${bridge_src}/" "${HATCH_DIST_ROOT}/vendor/whatsapp-bridge/"
+}
+
 _hatch_build_test_fail_maybe() {
   local marker="$1"
   if [[ "${HATCH_TEST_FAIL_AFTER_STEP:-}" != "${marker}" ]]; then
@@ -451,6 +523,19 @@ EOF
   log_step "stage runtime skills catalogs"
   stage_runtime_skills
   stage_runtime_optional_skills
+
+  log_step "stage runtime Node subsystems (TUI + WhatsApp bridge)"
+  stage_runtime_tui
+  stage_runtime_whatsapp_bridge
+  _hatch_build_test_fail_maybe after_node_subsystems
+
+  log_step "verify staged Node subsystems"
+  # Refuse the bundle the moment vendor/tui or vendor/whatsapp-bridge
+  # vanishes. Catches build.sh refactors that silently drop staging
+  # (May 2026 incident — both subtrees were never staged at all).
+  python3 "${HATCH_ROOT}/scripts/verify_node_subsystems.py" \
+    --bundle-root "${HATCH_DIST_ROOT}"
+  _hatch_build_test_fail_maybe after_node_subsystems_verify
 
   log_step "verify staged skill bundle against runtime checkout"
   verify_skill_bundle

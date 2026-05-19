@@ -39,7 +39,7 @@ while [[ $# -gt 0 ]]; do
       HATCH_SKILL_DEPS_PACK_ROOT="$(cd "$2" && pwd)"
       shift 2
       ;;
-    prepare-bundle|preflight|cleanup-existing|install|verify|doctor|verify-local-inference|verify-model-pack|install-model|verify-tools-pack|install-tools|verify-skill-deps|install-skill-deps|install-core-deps|verify-skill-readiness)
+    prepare-bundle|preflight|cleanup-existing|install|verify|doctor|verify-local-inference|verify-model-pack|install-model|verify-tools-pack|install-tools|verify-skill-deps|install-skill-deps|install-core-deps|install-agent-browser|verify-skill-readiness)
       COMMAND="$1"
       shift
       ;;
@@ -57,6 +57,7 @@ Usage:
   hatch/bin/hatch [--dry-run|--apply] [--bundle-root dist] [--skill-deps-pack-root tool-packs/skill-deps-pack] verify-skill-deps
   hatch/bin/hatch [--dry-run|--apply] [--bundle-root dist] [--skill-deps-pack-root tool-packs/skill-deps-pack] install-skill-deps
   hatch/bin/hatch [--dry-run|--apply] install-core-deps
+  hatch/bin/hatch [--dry-run|--apply] install-agent-browser
   hatch/bin/hatch [--dry-run|--apply] verify
   hatch/bin/hatch [--dry-run|--apply] verify-local-inference
   hatch/bin/hatch [--dry-run|--apply] verify-skill-readiness
@@ -431,12 +432,160 @@ install_runtime_assets() {
     log_warn "Bundle runtime directory missing; manifest may describe an external wheel-only bundle"
   fi
 
-  for asset in python support lm-studio models browser skills optional-skills launchd wheelhouse provisioning; do
+  # ``tui`` and ``whatsapp-bridge`` are Node subsystems the runtime expects
+  # to find under ``$MONOCLAW_HOME/vendor/`` (see ``_resolve_tui_dir`` and
+  # ``_resolve_bridge_dir`` in monoclaw-runtime).  Without these, ``monoclaw
+  # --tui`` crashes with FileNotFoundError on cwd and ``monoclaw whatsapp``
+  # exits at "Bridge script not found" — the May 2026 incident.
+  for asset in python support lm-studio models browser skills optional-skills \
+              launchd wheelhouse provisioning tui whatsapp-bridge; do
     if [[ -d "${HATCH_BUNDLE_ROOT}/vendor/${asset}" ]]; then
       log_action rm -rf "${home_dir}/vendor/${asset}"
       log_action cp -R "${HATCH_BUNDLE_ROOT}/vendor/${asset}" "${home_dir}/vendor/${asset}"
     fi
   done
+}
+
+_run_warm_npm_install() {
+  # Shared diagnostic-rich npm install runner for both warm_*_install
+  # functions. Captures stderr so the technician sees the real failure
+  # cause inline (May 2026 incident: the prior ``>/dev/null 2>&1`` swallow
+  # produced a bare "WhatsApp bridge npm install failed" with no context,
+  # exactly the same UX problem the runtime side just fixed for the TUI).
+  #
+  # Arguments: $1=label  $2=directory  $3=strict-mode-env-name
+  # ``--loglevel=error`` mirrors the runtime's ``_npm_install_args``:
+  # success is one line ("added N packages in Ms"), failure preserves
+  # the actual npm error chain.
+  local label="$1"
+  local dir="$2"
+  local strict_env="$3"
+  local strict_flag="${!strict_env:-0}"
+
+  local stderr_log
+  stderr_log="$(mktemp -t "hatch-npm-${label// /-}-stderr.XXXXXX")"
+
+  local rc=0
+  ( cd "${dir}" && npm install --loglevel=error --no-fund --no-audit --progress=false ) 2> "${stderr_log}" || rc=$?
+
+  if [[ "${rc}" == "0" ]]; then
+    rm -f "${stderr_log}"
+    log_ok "${label} dependencies installed at ${dir}/node_modules"
+    return 0
+  fi
+
+  # Surface npm's actual error: tail to 50 lines so peer-dep traces
+  # survive but we don't dump megabytes of verbose output.
+  printf '  --- npm stderr (exit %d) ---\n' "${rc}" >&2
+  tail -n 50 "${stderr_log}" | sed 's/^/  /' >&2
+
+  # Point at npm's full debug log so the technician can investigate
+  # without re-running. npm always writes one regardless of loglevel.
+  local newest_log
+  newest_log="$(ls -t "${HOME}/.npm/_logs/"*-debug-0.log 2>/dev/null | head -n 1)"
+  if [[ -n "${newest_log}" ]]; then
+    printf '  full log: %s\n' "${newest_log}" >&2
+  fi
+  printf '  retry manually with verbose output:\n    cd %s && npm install --loglevel=verbose\n' "${dir}" >&2
+  rm -f "${stderr_log}"
+
+  if [[ "${strict_flag}" == "1" ]]; then
+    die "${label} npm install failed (${strict_env}=1)"
+  fi
+  log_warn "${label} npm install failed; ${label} will retry on first use"
+  return 0
+}
+
+warm_whatsapp_bridge_install() {
+  # Run ``npm install`` against the staged ``vendor/whatsapp-bridge/`` so the
+  # customer Mac has the bridge ready when they later run ``monoclaw whatsapp``.
+  # The wizard has its own ``npm install`` fallback for dev-mode installs,
+  # but in the canonical Hatch path we want the bridge hot at provision
+  # time — the wizard is otherwise a 60-120s blackout on a cold npm cache.
+  #
+  # Non-fatal by default: if the customer Mac is offline at install time,
+  # we log a warning and let the wizard retry later. Set
+  # ``HATCH_REQUIRE_WHATSAPP_BRIDGE_INSTALL=1`` to upgrade the warning to a
+  # hard fail when install-time guarantees are required (e.g. lab provisioning).
+  local home_dir
+  home_dir="$(monoclaw_home)"
+  local bridge_dir="${home_dir}/vendor/whatsapp-bridge"
+
+  if [[ ! -f "${bridge_dir}/package.json" ]]; then
+    log_warn "WhatsApp bridge not staged at ${bridge_dir}; skipping npm install warmup"
+    return 0
+  fi
+
+  if [[ -d "${bridge_dir}/node_modules" ]]; then
+    log_ok "WhatsApp bridge node_modules already present"
+    return 0
+  fi
+
+  if ! have_command npm; then
+    if [[ "${HATCH_REQUIRE_WHATSAPP_BRIDGE_INSTALL:-0}" == "1" ]]; then
+      die "WhatsApp bridge npm install required but npm is not on PATH"
+    fi
+    log_warn "npm not on PATH; skipping WhatsApp bridge install (run \`monoclaw whatsapp\` later to install)"
+    return 0
+  fi
+
+  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+    printf '  dry-run: npm install --loglevel=error --no-fund --no-audit --progress=false in %s\n' "${bridge_dir}"
+    return 0
+  fi
+
+  log_step "install" "Warming WhatsApp bridge dependencies (one-time)"
+  _run_warm_npm_install "WhatsApp bridge" "${bridge_dir}" "HATCH_REQUIRE_WHATSAPP_BRIDGE_INSTALL"
+}
+
+warm_tui_install() {
+  # Run ``npm install`` against the staged ``vendor/tui/`` so the customer's
+  # first ``monoclaw --tui`` invocation isn't a 30-90s blackout (and, more
+  # importantly, isn't where any install failure first surfaces — see
+  # plans/tui-npm-install-error-handling.md for the May 2026 test-bench
+  # report). The runtime's ``_make_tui_argv`` keeps its on-demand install
+  # path as a fallback for git-editable installs and for cases where this
+  # warmup was skipped (offline at install time, npm missing, etc.).
+  #
+  # Non-fatal by default; set ``HATCH_REQUIRE_TUI_INSTALL=1`` for lab
+  # provisioning where the operator wants an install-time guarantee.
+  # Set ``HATCH_SKIP_TUI_WARMUP=1`` to skip entirely (e.g. for tight
+  # provisioning windows where the 30-90s cost matters more than the
+  # better UX).
+  local home_dir
+  home_dir="$(monoclaw_home)"
+  local tui_dir="${home_dir}/vendor/tui"
+
+  if [[ "${HATCH_SKIP_TUI_WARMUP:-0}" == "1" ]]; then
+    log_ok "TUI npm install skipped (HATCH_SKIP_TUI_WARMUP=1); \`monoclaw --tui\` will install on first run"
+    return 0
+  fi
+
+  if [[ ! -f "${tui_dir}/package.json" ]]; then
+    log_warn "TUI not staged at ${tui_dir}; skipping npm install warmup"
+    return 0
+  fi
+
+  if [[ -d "${tui_dir}/node_modules" ]]; then
+    log_ok "TUI node_modules already present"
+    return 0
+  fi
+
+  if ! have_command npm; then
+    if [[ "${HATCH_REQUIRE_TUI_INSTALL:-0}" == "1" ]]; then
+      die "TUI npm install required but npm is not on PATH"
+    fi
+    log_warn "npm not on PATH; skipping TUI install (run \`monoclaw --tui\` later to install)"
+    return 0
+  fi
+
+  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+    printf '  dry-run: npm install --loglevel=error --no-fund --no-audit --progress=false in %s\n' "${tui_dir}"
+    return 0
+  fi
+
+  log_step "install" "Warming TUI dependencies (one-time, ~30-90s on cold cache)"
+  _run_warm_npm_install "TUI" "${tui_dir}" "HATCH_REQUIRE_TUI_INSTALL"
 }
 
 ensure_local_bin_on_path() {
@@ -635,6 +784,40 @@ bootstrap_runtime() {
   write_monoclaw_shim "${HOME}" "${venv_dir}"
 }
 
+initialize_skills_hub_dir() {
+  # Pre-create ``~/.monoclaw/skills/.hub/`` so doctor's "Skills Hub
+  # directory not initialized" check passes on a fresh install.
+  # Pre-2026-05 the directory was created lazily on the first
+  # ``monoclaw skills list`` call, which means the very first
+  # ``monoclaw doctor`` after install always emitted a misleading
+  # "run: monoclaw skills list" warning. Seeding here is harmless: the
+  # CLI continues to lazily upgrade the directory's schema as needed.
+  local home_dir hub_dir lock_file
+  home_dir="$(monoclaw_home)"
+  hub_dir="${home_dir}/skills/.hub"
+  lock_file="${hub_dir}/lock.json"
+
+  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+    if [[ ! -d "${hub_dir}" ]]; then
+      printf '  dry-run: mkdir -p %s\n' "${hub_dir}"
+    fi
+    if [[ ! -f "${lock_file}" ]]; then
+      printf '  dry-run: write empty lock file at %s\n' "${lock_file}"
+    fi
+    return
+  fi
+
+  mkdir -p "${hub_dir}"
+  # Only seed the lock file when it does not exist — never overwrite a
+  # pre-existing one (could destroy hub-installed skill metadata).
+  if [[ ! -f "${lock_file}" ]]; then
+    printf '{"installed": {}}\n' > "${lock_file}"
+    log_ok "Initialized Skills Hub at ${hub_dir}"
+  else
+    log_ok "Skills Hub already initialized at ${hub_dir}"
+  fi
+}
+
 install_bundled_skills() {
   local home_dir
   local source_dir
@@ -728,6 +911,31 @@ run_install() {
   write_setup_config_handoff
   bootstrap_runtime
   install_bundled_skills
+  initialize_skills_hub_dir
+  # Pre-2026-05 ``run_install`` skipped the core-deps + agent-browser
+  # provisioning entirely; those steps only ran via the optional
+  # skill-deps pack (``run_install_skill_deps``) which is absent in the
+  # default local-office bundle. Result: every fresh customer Mac came up
+  # without ``rg``, ``ffmpeg``, or ``agent-browser`` and ``monoclaw doctor
+  # --fix`` flagged each as a manual fix item. Wiring them here closes
+  # that gap. The standalone ``bin/hatch install-core-deps`` command and
+  # the ``run_install_skill_deps`` flow remain idempotent thanks to
+  # ``brew install --quiet`` and ``npm install -g``.
+  install_class_a_brew_formulas
+  run_install_core_deps
+  run_install_agent_browser
+  # Warm the WhatsApp bridge's node_modules so the customer's first
+  # ``monoclaw whatsapp`` run isn't a 60-120s blackout on a cold npm cache.
+  # Non-fatal: if the customer is offline the wizard retries later.
+  warm_whatsapp_bridge_install
+  # Same logic for the TUI's node_modules so the customer's first
+  # ``monoclaw --tui`` invocation isn't where install failures first
+  # surface (May 2026 incident — see
+  # plans/tui-npm-install-error-handling.md). Non-fatal by default;
+  # ``HATCH_REQUIRE_TUI_INSTALL=1`` upgrades to a hard failure for
+  # lab provisioning, and ``HATCH_SKIP_TUI_WARMUP=1`` opts out for
+  # tight provisioning windows.
+  warm_tui_install
   print_manual_local_inference_handoff
   print_technician_handoff
   log_step "install" "Service bootstrap scaffold"
@@ -1631,12 +1839,18 @@ run_install_core_deps() {
   # ``node`` bundles ``npm``; we don't list it separately. ``opus`` is a
   # system library — brew install lays down ``libopus.dylib`` under the
   # active prefix, which the runtime's ``opus`` sub-wizard then verifies.
+  # ``ripgrep`` is in the core-deps list (added 2026-05) because every
+  # MonoClaw file-search code path falls back to slow grep when ``rg`` is
+  # missing; ``scripts/install.sh`` already installs it on the curl-bash
+  # path, but the Hatch path used to silently skip it and surface as a
+  # doctor warning every fresh install.
   local entry spec description
   for entry in \
       "node|Node.js LTS (+npm)" \
       "uv|Astral uv (Python env manager)" \
       "opus|Opus codec (Discord voice)" \
-      "ffmpeg|ffmpeg (TTS playback, voice mode)"; do
+      "ffmpeg|ffmpeg (TTS playback, voice mode)" \
+      "ripgrep|ripgrep (fast file search; rg)"; do
     spec="${entry%%|*}"
     description="${entry#*|}"
     if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
@@ -1649,6 +1863,152 @@ run_install_core_deps() {
       log_warn "core-deps ${spec}: 'brew install ${spec}' failed; monoclaw provision will surface this later"
     fi
   done
+}
+
+# ---------------------------------------------------------------------------
+# agent-browser provisioning (online-first, bundle-fallback)
+#
+# agent-browser is the npm package the runtime drives for headless
+# browser automation. Doctor warns when it is missing, and pre-2026-05
+# Hatch never installed it on the customer Mac — an entire class of
+# tools silently fell back to "no browser" mode after a clean install.
+#
+# Online-first / bundle-fallback mirrors the Class-A brew formula
+# pattern (himalaya / remindctl / memo): try the canonical source
+# (``npm install -g agent-browser@<pin>``) when online, and fall back
+# to copying the bundled ``node_modules`` into
+# ``~/.monoclaw/vendor/browser/`` when offline. The doctor's
+# ``_locate_agent_browser`` helper sees both locations.
+#
+# Skipped under:
+#
+#   * ``HATCH_INSTALL_OFFLINE=1``           — air-gapped install (bundle-only)
+#   * ``HATCH_INSTALL_AGENT_BROWSER=0``     — technician opt-out (mirror of
+#                                              ``HATCH_INSTALL_BREW_FORMULAS=0``)
+#
+# When online, ``npm`` is required (we install it via core-deps just
+# above this call). If the npm step fails for any reason we still try
+# the bundle copy so the customer is never left worse than offline.
+# ---------------------------------------------------------------------------
+
+# Pin the agent-browser version. Keep in sync with ``monoclaw-runtime/package.json``
+# (``"agent-browser": "^0.26.0"``). Hatch owns this pin directly so a
+# bundle build is reproducible without resolving a semver range against
+# the npm registry at install time.
+HATCH_AGENT_BROWSER_VERSION="${HATCH_AGENT_BROWSER_VERSION:-0.26.0}"
+
+install_agent_browser_via_npm() {
+  # Returns 0 on success (installed or already present), 1 on failure.
+  local home_dir="$1"
+
+  if [[ "${HATCH_INSTALL_OFFLINE:-0}" == "1" ]]; then
+    return 1
+  fi
+  if ! have_command npm; then
+    log_warn "agent-browser: npm not on PATH; cannot install via npm (core-deps may have failed)"
+    return 1
+  fi
+
+  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+    printf '  dry-run: npm install -g agent-browser@%s\n' "${HATCH_AGENT_BROWSER_VERSION}"
+    return 0
+  fi
+
+  # ``npm install -g`` is the canonical Hatch path: the binary lands on
+  # PATH (npm prefix) and ``_locate_agent_browser`` finds it via
+  # ``shutil.which``. We capture stderr so a network-blocked install
+  # surfaces a useful diagnostic before we fall back to the bundle.
+  local npm_log
+  npm_log="$(mktemp)"
+  if npm install --silent -g "agent-browser@${HATCH_AGENT_BROWSER_VERSION}" 2>"${npm_log}"; then
+    rm -f "${npm_log}"
+    log_ok "agent-browser ${HATCH_AGENT_BROWSER_VERSION}: installed via npm -g"
+    return 0
+  fi
+
+  log_warn "agent-browser: 'npm install -g agent-browser@${HATCH_AGENT_BROWSER_VERSION}' failed"
+  if [[ -s "${npm_log}" ]]; then
+    sed 's/^/    npm: /' "${npm_log}" | head -5
+  fi
+  rm -f "${npm_log}"
+  return 1
+}
+
+install_agent_browser_via_bundle() {
+  # Returns 0 on success (bundle copied or already in place), 1 if no
+  # bundled copy is available (caller decides whether that is fatal).
+  local home_dir="$1"
+  local source_dir="${HATCH_BUNDLE_ROOT}/vendor/browser"
+  local target_dir="${home_dir}/vendor/browser"
+
+  # The bundle source path. ``copy_optional_vendor_asset "browser"``
+  # already runs during ``stage_bundle`` (build.sh:446) and stages
+  # ``bundle-inputs/vendor/browser/`` to ``dist/vendor/browser/``. At
+  # install time ``install_runtime_assets`` ALSO copies that subtree to
+  # ``~/.monoclaw/vendor/browser/`` — so on a real install the bundle
+  # is already present. We re-verify here defensively.
+  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+    if [[ -d "${source_dir}/node_modules/agent-browser" ]]; then
+      printf '  dry-run: agent-browser bundle present at %s — install_runtime_assets stages it to %s\n' \
+        "${source_dir}" "${target_dir}"
+      return 0
+    fi
+    printf '  dry-run: no agent-browser bundle at %s; bundle-fallback unavailable\n' "${source_dir}"
+    return 1
+  fi
+
+  if [[ -d "${target_dir}/node_modules/agent-browser" ]]; then
+    log_ok "agent-browser: bundle copy in place at ${target_dir}/node_modules/agent-browser"
+    return 0
+  fi
+
+  if [[ -d "${source_dir}/node_modules/agent-browser" ]]; then
+    # install_runtime_assets normally handles this, but if a technician
+    # rebuilds or runs a partial install we copy here defensively. ``cp -R``
+    # is idempotent: if the dest exists we removed it above.
+    mkdir -p "${target_dir}"
+    if cp -R "${source_dir}/node_modules" "${target_dir}/node_modules"; then
+      log_ok "agent-browser: bundle staged to ${target_dir}/node_modules/agent-browser"
+      return 0
+    fi
+    log_warn "agent-browser: failed to copy bundle from ${source_dir} to ${target_dir}"
+    return 1
+  fi
+
+  log_warn "agent-browser: no bundled copy available at ${source_dir} (bundle was built without browser assets)"
+  return 1
+}
+
+run_install_agent_browser() {
+  if [[ "${HATCH_INSTALL_AGENT_BROWSER:-1}" == "0" ]]; then
+    log_step "agent-browser" "HATCH_INSTALL_AGENT_BROWSER=0; skipping"
+    return
+  fi
+
+  local home_dir
+  home_dir="$(monoclaw_home)"
+
+  log_step "agent-browser" "Installing agent-browser (npm-first, bundle-fallback)"
+
+  # Try the online path first. Bundle fallback runs when:
+  #   * we are explicitly offline (HATCH_INSTALL_OFFLINE=1), OR
+  #   * the npm install failed for any reason.
+  if [[ "${HATCH_INSTALL_OFFLINE:-0}" == "1" ]]; then
+    log_step "agent-browser" "HATCH_INSTALL_OFFLINE=1; skipping npm and using bundle"
+    install_agent_browser_via_bundle "${home_dir}" || \
+      log_warn "agent-browser: not installed (offline + no bundle); browser tools will be unavailable until 'npm install -g agent-browser' runs online"
+    return
+  fi
+
+  if install_agent_browser_via_npm "${home_dir}"; then
+    return
+  fi
+
+  log_step "agent-browser" "npm path failed; falling back to bundled copy"
+  if ! install_agent_browser_via_bundle "${home_dir}"; then
+    log_warn "agent-browser: neither npm nor bundle install succeeded; browser tools will be unavailable"
+    log_warn "agent-browser: retry online with 'npm install -g agent-browser@${HATCH_AGENT_BROWSER_VERSION} && agent-browser install'"
+  fi
 }
 
 run_doctor() {
@@ -1698,6 +2058,9 @@ case "${COMMAND}" in
     ;;
   install-core-deps)
     run_install_core_deps
+    ;;
+  install-agent-browser)
+    run_install_agent_browser
     ;;
   verify-skill-readiness)
     run_verify_skill_readiness

@@ -52,7 +52,14 @@ for needle in \
     "brew install --quiet node" \
     "brew install --quiet uv" \
     "brew install --quiet opus" \
-    "brew install --quiet ffmpeg"; do
+    "brew install --quiet ffmpeg" \
+    "brew install --quiet ripgrep"; do
+  # ``ripgrep`` was added 2026-05 after the install regression where
+  # every fresh Hatch Mac came up without ``rg`` (because
+  # ``run_install_core_deps`` only fired via the optional skill-deps
+  # pack and that pack does not ship in the default local-office
+  # bundle).  Pin the formula list here so the same regression cannot
+  # recur silently.
   case "${OUT}" in
     *"${needle}"*) ;;
     *)
@@ -90,4 +97,4 @@ case "${NO_BREW_OUT}" in
   *) printf 'fail: missing-brew case did not surface a clear message. got:\n%s\n' "${NO_BREW_OUT}" >&2; exit 1;;
 esac
 
-printf 'ok: hatch core-deps install plan (node, uv, opus, ffmpeg)\n'
+printf 'ok: hatch core-deps install plan (node, uv, opus, ffmpeg, ripgrep)\n'

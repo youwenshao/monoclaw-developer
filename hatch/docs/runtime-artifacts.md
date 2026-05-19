@@ -166,6 +166,17 @@ dist/
       chromium/
     skills/
     optional-skills/
+    tui/
+      package.json
+      package-lock.json
+      packages/monoclaw-ink/dist/entry-exports.js
+      dist/entry.js
+      src/
+    whatsapp-bridge/
+      package.json
+      package-lock.json
+      bridge.js
+      allowlist.js
     wheelhouse/
       *.whl
     launchd/
@@ -188,6 +199,79 @@ tool-packs/
 The layout may omit optional directories when the manifest marks the matching
 capability as disabled. The installer must not silently assume omitted optional
 assets are available.
+
+### Node subsystems: `vendor/tui` and `vendor/whatsapp-bridge`
+
+The runtime ships two Node-shaped subsystems that the Python wheel cannot
+contain: the Ink-based TUI (`ui-tui/`) and the WhatsApp gateway's Node
+bridge (`scripts/whatsapp-bridge/`). Both are sourced from the
+`monoclaw-runtime` checkout at assembly time and copied verbatim into
+`dist/vendor/`, then mirrored into `~/.monoclaw/vendor/` during
+`install_runtime_assets`.
+
+**`vendor/tui/`** — staged via `build.sh::stage_runtime_tui()`. The
+Hatch host runs `npm ci && npm run build` against the runtime checkout
+so that `dist/entry.js` and `packages/monoclaw-ink/dist/entry-exports.js`
+are prebuilt and shipped. `node_modules/` is **excluded** from the
+bundle (host-specific native binaries would break under Rosetta or on a
+different architecture); the customer Mac creates its own
+`node_modules` via `npm install` (dependency resolution only — no
+`npm run build`). Two install paths exist for the customer's
+`node_modules`, in priority order:
+
+1. `bin/hatch::warm_tui_install` runs `npm install` against
+   `~/.monoclaw/vendor/tui/` immediately after `install_runtime_assets`
+   so the customer's first `monoclaw --tui` invocation is a hot start.
+   Non-fatal by default (offline/missing-npm degrade to a warning);
+   set `HATCH_REQUIRE_TUI_INSTALL=1` for lab provisioning where the
+   operator wants an install-time guarantee, or
+   `HATCH_SKIP_TUI_WARMUP=1` to opt out entirely (e.g. tight
+   provisioning windows where the 30-90s cold-cache cost matters
+   more than the better UX).
+2. Runtime fallback: if `warm_tui_install` was skipped, opted out, or
+   failed non-fatally, `_make_tui_argv` in the runtime does the same
+   `npm install` on first `monoclaw --tui` launch — now with full
+   Phase 1 diagnostics (exit code, cwd, npm log path, retry hint, and
+   a `MONOCLAW_TUI_NPM_VERBOSE=1` escalation knob).
+
+`monoclaw doctor` distinguishes three states for both Node subsystems:
+**ready** (sources staged + `node_modules` populated), **staged but
+unwarmed** (sources present, `node_modules` missing — info for the
+TUI, warn for an enabled WhatsApp bridge), and **not staged** (sources
+absent — warn).
+
+**`vendor/whatsapp-bridge/`** — staged via
+`build.sh::stage_runtime_whatsapp_bridge()`. Sources only
+(`bridge.js`, `allowlist.js`, `package.json`, `package-lock.json`).
+Hatch's `install_runtime_assets` step copies the tree, and a follow-up
+`warm_whatsapp_bridge_install` step runs `npm install` against the
+staged location so the customer's first `monoclaw whatsapp` setup
+wizard isn't a 60-120s blackout on a cold npm cache. The warmup is
+non-fatal by default (a missing network downgrades to a warning); set
+`HATCH_REQUIRE_WHATSAPP_BRIDGE_INSTALL=1` for lab provisioning where
+the operator wants an install-time guarantee. Both warm functions
+share a single `_run_warm_npm_install` runner that surfaces npm's
+actual error chain on failure (exit code, last 50 stderr lines, npm
+debug log path, manual retry command). The pre-2026-05 `>/dev/null
+2>&1` swallow that produced bare "npm install failed" lines is gone.
+
+Runtime resolvers (in `monoclaw-runtime`) consult these locations via:
+
+- `monoclaw_cli/main.py::_resolve_tui_dir()` — checks
+  `$MONOCLAW_TUI_DIR` (dev override), then
+  `$MONOCLAW_HOME/vendor/tui/`, then the source-tree fallback.
+- `gateway/platforms/whatsapp.py::_resolve_bridge_dir()` — checks
+  `$MONOCLAW_WHATSAPP_BRIDGE_DIR`, then
+  `$MONOCLAW_HOME/vendor/whatsapp-bridge/`, then the source-tree
+  fallback.
+
+`hatch/scripts/verify_node_subsystems.py` runs immediately after staging
+and refuses bundles that are missing either subtree OR that have leaked
+`node_modules`. The May 2026 incident traced to neither subtree being
+staged at all under wheel installs — `monoclaw --tui` crashed with
+`FileNotFoundError` and `monoclaw whatsapp` exited at "Bridge script not
+found". This verifier is the bundle-build gate that prevents that
+regression from recurring.
 
 ## Manifest Contract
 
@@ -241,6 +325,11 @@ unexpected payload files, remains a verification failure.
     models/
     browser/
     skills/
+    tui/                  # Ink TUI sources + prebuilt dist/entry.js
+      node_modules/       # populated by `warm_tui_install`
+                          # (or lazily by `monoclaw --tui` if skipped)
+    whatsapp-bridge/      # Node bridge for the WhatsApp gateway
+      node_modules/       # populated by `warm_whatsapp_bridge_install`
     wheelhouse/
     launchd/
 ```
