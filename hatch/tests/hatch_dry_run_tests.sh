@@ -165,7 +165,7 @@ if grep -q "lmstudio.ai/install.sh" "${TMP}/install.out"; then
   printf 'install should not script LM Studio installation\n' >&2
   exit 1
 fi
-grep -q "run monoclaw provision" "${TMP}/install.out"
+grep -q "complete setup with: monoclaw provision" "${TMP}/install.out"
 
 run_hatch_with_broken_ensurepip install | tee "${TMP}/install-broken-ensurepip.out"
 grep -q "Bundled Python failed to create a pip-capable venv; rebuild the bundle with a working Python runtime" "${TMP}/install-broken-ensurepip.out"
