@@ -174,10 +174,6 @@
     {
       "source": "vendor/mona-tools/templates/plugins",
       "path": "plugins"
-    },
-    {
-      "source": "vendor/mona-tools/templates/skills",
-      "path": "skills"
     }
   ]
 }

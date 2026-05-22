@@ -262,7 +262,7 @@ check_terminal_dependencies() {
   install_homebrew_if_missing
   ensure_runtime_python_available
 
-  if [[ -d "/Applications/LM Studio.app" ]]; then
+  if lm_studio_app_installed; then
     log_ok "LM Studio app is present"
   else
     log_warn "LM Studio app is missing; install it manually from the official .dmg if local inference is required"
@@ -276,8 +276,31 @@ cleanup_existing_runtime() {
     local monoclaw_venv_bin
     monoclaw_venv_bin="$(monoclaw_home)/vendor/runtime/venv/bin/monoclaw"
     if [[ -x "${monoclaw_venv_bin}" ]]; then
-      log_action monoclaw gateway stop
-      log_action monoclaw gateway uninstall
+      # Set HATCH_AUTO_UNINSTALL=0 to skip the uninstall-wizard prompt and run
+      # the standard gateway cleanup instead (e.g. for headless provisioning).
+      if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+        printf '  dry-run: existing MonoClaw install detected; would offer uninstall wizard [Y/n]\n'
+        log_action monoclaw gateway stop
+        log_action monoclaw gateway uninstall
+      elif [[ "${HATCH_AUTO_UNINSTALL:-1}" == "0" ]]; then
+        printf '  info: HATCH_AUTO_UNINSTALL=0; skipping uninstall prompt\n' >&2
+        log_action monoclaw gateway stop
+        log_action monoclaw gateway uninstall
+      elif [[ -t 0 && -t 1 ]]; then
+        printf '\n  An existing MonoClaw installation was detected.\n'
+        printf '  Run the MonoClaw uninstall wizard before reinstalling? [Y/n] '
+        read -r _UNINSTALL_ANSWER || true
+        if [[ -z "${_UNINSTALL_ANSWER}" ]] || [[ "${_UNINSTALL_ANSWER}" =~ ^[Yy] ]]; then
+          export PATH="${HOME}/.local/bin:${PATH}"
+          monoclaw uninstall || true
+        else
+          log_action monoclaw gateway stop
+          log_action monoclaw gateway uninstall
+        fi
+      else
+        log_action monoclaw gateway stop
+        log_action monoclaw gateway uninstall
+      fi
     else
       log_warn "monoclaw shim found but runtime venv is missing or incomplete; skipping gateway cleanup"
     fi
@@ -424,6 +447,10 @@ install_runtime_assets() {
   log_action mkdir -p "${home_dir}/customer"
   log_action mkdir -p "${home_dir}/logs"
   log_action cp "${HATCH_BUNDLE_ROOT}/hatch-manifest.json" "${home_dir}/vendor/hatch-manifest.json"
+
+  if [[ -f "${HATCH_BUNDLE_ROOT}/LICENSE.md" ]]; then
+    log_action cp "${HATCH_BUNDLE_ROOT}/LICENSE.md" "${home_dir}/LICENSE.md"
+  fi
 
   if [[ -d "${HATCH_BUNDLE_ROOT}/runtime" ]]; then
     log_action rm -rf "${home_dir}/vendor/runtime"
@@ -862,12 +889,12 @@ write_setup_config_handoff() {
     if [[ -f "${home_dir}/.env" ]]; then
       printf '  dry-run: keep existing %s\n' "${home_dir}/.env"
     else
-      printf '  dry-run: leave %s for monoclaw setup\n' "${home_dir}/.env"
+      printf '  dry-run: leave %s for monoclaw onboard\n' "${home_dir}/.env"
     fi
     if [[ -f "${home_dir}/config.yaml" ]]; then
       printf '  dry-run: keep existing %s\n' "${home_dir}/config.yaml"
     else
-      printf '  dry-run: leave %s for monoclaw setup\n' "${home_dir}/config.yaml"
+      printf '  dry-run: leave %s for monoclaw onboard\n' "${home_dir}/config.yaml"
     fi
     return
   fi
@@ -875,30 +902,44 @@ write_setup_config_handoff() {
   if [[ -f "${home_dir}/.env" ]]; then
     log_warn "Keeping existing ${home_dir}/.env"
   else
-    log_warn "No ${home_dir}/.env written; run monoclaw setup for provider and secret configuration"
+    log_warn "No ${home_dir}/.env written; end user runs monoclaw onboard for provider and secret configuration"
   fi
 
   if [[ -f "${home_dir}/config.yaml" ]]; then
     log_warn "Keeping existing ${home_dir}/config.yaml"
   else
-    log_warn "No ${home_dir}/config.yaml written; run monoclaw setup for runtime configuration"
+    log_warn "No ${home_dir}/config.yaml written; technician provision writes safe defaults; end user runs monoclaw onboard"
   fi
 }
 
+lm_studio_app_path() {
+  printf '%s\n' "${HATCH_LM_STUDIO_APP_PATH:-/Applications/LM Studio.app}"
+}
+
+gemma_lmstudio_models_dir() {
+  printf '%s/.lmstudio/models/lmstudio-community/gemma-4-E4B-it-GGUF\n' "${HOME}"
+}
+
+lm_studio_app_installed() {
+  [[ -d "$(lm_studio_app_path)" ]]
+}
+
 print_manual_local_inference_handoff() {
+  local gemma_dir
+  gemma_dir="$(gemma_lmstudio_models_dir)"
   log_step "install" "Manual local inference handoff"
-  printf '  manual: install LM Studio from the official .dmg if local inference is required\n'
+  printf '  manual: install LM Studio from the official .dmg before ./install-gemma-model.sh\n'
   printf '  manual: install Docker Desktop from the official .dmg if sandboxed tools are required\n'
   printf '  manual: use ./install-gemma-model.sh when the optional Gemma model pack is present on the pendrive\n'
-  printf '  manual: launch LM Studio once and import the staged GGUF from ~/.monoclaw/vendor/models/gemma-4-e4b/gemma-4-e4b.gguf\n'
+  printf '  manual: after install-model, launch LM Studio once; models load from %s\n' "${gemma_dir}"
 }
 
 print_technician_handoff() {
   log_step "install" "Technician handoff"
   printf '  next: open a new terminal or run: export PATH="%s/.local/bin:$PATH"\n' "${HOME}"
   printf '  next: verify runtime with: monoclaw --version\n'
-  printf '  next: complete setup with: monoclaw provision\n'
-  printf '        (install.sh will prompt to run this automatically when a TTY is available)\n'
+  printf '  next: ship this Mac — end user runs: monoclaw onboard\n'
+  printf '        (install.sh runs monoclaw provision --non-interactive automatically)\n'
 }
 
 run_install() {
@@ -1080,16 +1121,23 @@ run_verify_local_inference() {
   home_dir="$(monoclaw_home)"
 
   log_step "verify" "Checking optional local inference readiness"
-  if [[ -d "/Applications/LM Studio.app" ]]; then
-    log_ok "LM Studio app present in /Applications"
+  if lm_studio_app_installed; then
+    log_ok "LM Studio app present at $(lm_studio_app_path)"
   else
-    log_warn "LM Studio app is missing from /Applications"
+    log_warn "LM Studio app is missing at $(lm_studio_app_path)"
   fi
 
-  if [[ -f "${home_dir}/vendor/models/gemma-4-e4b/gemma-4-e4b.gguf" ]]; then
-    log_ok "Gemma 4 E4B model present"
+  local gemma_dir
+  gemma_dir="$(gemma_lmstudio_models_dir)"
+  if [[ -f "${gemma_dir}/gemma-4-E4B-it-Q4_K_M.gguf" ]]; then
+    log_ok "Gemma 4 E4B chat weights present in LM Studio models directory"
   else
-    log_warn "Gemma 4 E4B model is missing"
+    log_warn "Gemma 4 E4B chat weights missing from ${gemma_dir}"
+  fi
+  if [[ -f "${gemma_dir}/mmproj-gemma-4-E4B-it-f16.gguf" ]]; then
+    log_ok "Gemma 4 E4B vision projector (mmproj) present"
+  else
+    log_warn "Gemma 4 E4B mmproj missing from ${gemma_dir}"
   fi
 
   if [[ -f "${home_dir}/.env" ]] \
@@ -1124,73 +1172,70 @@ if value:
 PY
 }
 
+model_pack_artifact_paths() {
+  local python_bin
+  python_bin="$(hatch_manifest_python "${HATCH_BUNDLE_ROOT}")"
+  PYTHONDONTWRITEBYTECODE=1 HATCH_MODEL_PACK_ROOT="${HATCH_MODEL_PACK_ROOT}" "${python_bin}" <<'PY'
+import json
+import os
+from pathlib import Path
+
+manifest = Path(os.environ["HATCH_MODEL_PACK_ROOT"]) / "model-pack-manifest.json"
+data = json.loads(manifest.read_text(encoding="utf-8"))
+for artifact in data.get("artifacts", []):
+    path = artifact.get("path")
+    if path:
+        print(path)
+PY
+}
+
 run_verify_model_pack() {
   log_step "model-pack" "Checking optional Gemma model pack"
   verify_model_pack_manifest "${HATCH_MODEL_PACK_ROOT}" | sed 's/^/  ok: /'
 }
 
 run_install_model() {
-  local home_dir
+  local target_dir
   local model_rel
   local model_name
   local source_path
-  local target_dir
   local target_path
   local tmp_path
-  home_dir="$(monoclaw_home)"
+
+  if ! lm_studio_app_installed; then
+    die "LM Studio is not installed. Install it from the official .dmg before running install-model."
+  fi
 
   run_verify_model_pack
-  model_rel="$(model_pack_manifest_field path)"
-  model_name="$(basename "${model_rel}")"
-  source_path="${HATCH_MODEL_PACK_ROOT}/${model_rel}"
-  target_dir="${home_dir}/vendor/models/gemma-4-e4b"
-  target_path="${target_dir}/${model_name}"
-  tmp_path="${target_dir}/.${model_name}.tmp"
+  target_dir="$(gemma_lmstudio_models_dir)"
 
-  log_step "model-pack" "Installing optional Gemma 4 E4B model"
-  log_warn "LM Studio may copy this GGUF again during manual import; make sure the target Mac has enough free disk space"
+  log_step "model-pack" "Installing optional Gemma 4 E4B model into LM Studio"
   log_action mkdir -p "${target_dir}"
-  log_action cp "${source_path}" "${tmp_path}"
-  log_action mv "${tmp_path}" "${target_path}"
-  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
-    printf '  dry-run: Gemma 4 E4B model staged at %s\n' "${target_path}"
-  else
-    log_ok "Gemma 4 E4B model staged at ${target_path}"
+
+  while IFS= read -r model_rel; do
+    [[ -n "${model_rel}" ]] || continue
+    model_name="$(basename "${model_rel}")"
+    source_path="${HATCH_MODEL_PACK_ROOT}/${model_rel}"
+    target_path="${target_dir}/${model_name}"
+    tmp_path="${target_dir}/.${model_name}.tmp"
+    log_action cp "${source_path}" "${tmp_path}"
+    log_action mv "${tmp_path}" "${target_path}"
+    if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
+      printf '  dry-run: staged %s\n' "${target_path}"
+    else
+      log_ok "Staged ${model_name} at ${target_path}"
+    fi
+  done < <(model_pack_artifact_paths)
+
+  if [[ "${HATCH_DRY_RUN}" != "true" ]]; then
+    log_ok "Gemma 4 E4B model pack installed under ${target_dir}"
+    printf '  next: launch LM Studio once; it should auto-discover the bundled GGUF files\n'
   fi
-  printf '  manual: import %s from LM Studio after first launch\n' "${target_path}"
 }
 
 run_verify_tools_pack() {
   log_step "tools-pack" "Checking optional Mona secretary tools pack"
   verify_tools_pack_manifest "${HATCH_TOOLS_PACK_ROOT}" "mona-secretary-tools" | sed 's/^/  ok: /'
-}
-
-install_tools_pack_skills() {
-  local source_dir="$1"
-  local target_dir="$2"
-
-  if [[ ! -d "${source_dir}" ]]; then
-    log_warn "No Mona secretary skills staged at ${source_dir}"
-    return
-  fi
-
-  if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
-    printf '  dry-run: install Mona secretary skills into %s\n' "${target_dir}"
-    return
-  fi
-
-  mkdir -p "${target_dir}"
-  for skill_path in "${source_dir}"/*; do
-    [[ -e "${skill_path}" ]] || continue
-    local skill_name
-    skill_name="$(basename "${skill_path}")"
-    if [[ -e "${target_dir}/${skill_name}" ]]; then
-      log_warn "Keeping existing skill ${target_dir}/${skill_name}"
-      continue
-    fi
-    cp -R "${skill_path}" "${target_dir}/${skill_name}"
-  done
-  log_ok "Mona secretary skills installed into ${target_dir}"
 }
 
 install_tools_pack_plugins() {
@@ -1232,11 +1277,10 @@ run_install_tools() {
   log_action rm -rf "${target_dir}"
   log_action mkdir -p "${home_dir}/vendor"
   log_action cp -R "${HATCH_TOOLS_PACK_ROOT}" "${target_dir}"
-  install_tools_pack_skills "${HATCH_TOOLS_PACK_ROOT}/skills" "${home_dir}/skills"
   install_tools_pack_plugins "${HATCH_TOOLS_PACK_ROOT}/plugins" "${home_dir}/plugins"
   printf '  manual: review %s before enabling host automation tools\n' "${target_dir}/docs/permissions.md"
   printf '  manual: copy MCP examples from %s only after reviewing path and permission scopes\n' "${target_dir}/config"
-  printf '  next: run monoclaw provision to complete first-run onboarding (Mona permissions, MCP templates, tool activation, model setup)\n'
+  printf '  next: technician provision complete; end user runs: monoclaw onboard\n'
   if [[ "${HATCH_DRY_RUN}" == "true" ]]; then
     printf '  dry-run: Mona secretary tools installed at %s\n' "${target_dir}"
   else

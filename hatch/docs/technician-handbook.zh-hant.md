@@ -122,17 +122,20 @@ monoclaw setup
 
 ### 如果已配置本地推理
 
-1. 從官方 `.dmg` 安裝 LM Studio（如果你尚未安裝）。
+1. 從官方 `.dmg` 安裝 LM Studio，並在執行 `./install-gemma-model.sh` **之前**完成（必需）。
 2. 啟動 LM Studio 一次並完成首次設定。
 3. 如果模型包在隨身碟上，請執行：
    ```bash
    cd /Volumes/<你的隨身碟>/dist
    ./install-gemma-model.sh
    ```
-4. 在 LM Studio 中，從以下路徑匯入模型：
+   腳本會將聊天 GGUF 與視覺投影（mmproj）複製到 LM Studio 原生模型目錄：
    ```
-   ~/.monoclaw/vendor/models/gemma-4-e4b/gemma-4-e4b.gguf
+   ~/.lmstudio/models/lmstudio-community/gemma-4-E4B-it-GGUF/
+     gemma-4-E4B-it-Q4_K_M.gguf
+     mmproj-gemma-4-E4B-it-f16.gguf
    ```
+4. 再次啟動 LM Studio；應自動發現已部署的模型（無需手動匯入）。
 5. 再次運行 `monoclaw setup`（或編輯 `~/.monoclaw/.env`）以指向本地端點：
    ```
    LM_BASE_URL=http://127.0.0.1:1234/v1

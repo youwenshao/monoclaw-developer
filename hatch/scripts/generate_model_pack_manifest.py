@@ -42,22 +42,44 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--provider", required=True)
     parser.add_argument("--role", default="chat")
     parser.add_argument("--model-file", required=True)
+    parser.add_argument(
+        "--extra-file",
+        action="append",
+        default=[],
+        help="Additional artifact paths relative to the model pack root (repeatable).",
+    )
     return parser.parse_args()
+
+
+def artifact_entry(root: Path, relative: str) -> dict:
+    raw_path = root / relative
+    path = raw_path.resolve(strict=False)
+    if root != path and root not in path.parents:
+        raise SystemExit(f"model pack file escapes pack root: {relative}")
+    if is_ignored_metadata(path, root):
+        raise SystemExit(f"model pack file points to ignored metadata: {relative}")
+    if not path.is_file():
+        raise SystemExit(f"model pack file missing: {path}")
+    rel_path = path.relative_to(root).as_posix()
+    return {
+        "path": rel_path,
+        "kind": "file",
+        "sha256": sha256(path),
+        "bytes": path.stat().st_size,
+    }
 
 
 def main() -> None:
     args = parse_args()
     root = Path(args.model_pack_root).resolve()
-    raw_model_path = root / args.model_file
-    model_path = raw_model_path.resolve(strict=False)
-    if root != model_path and root not in model_path.parents:
-        raise SystemExit(f"model file escapes pack root: {args.model_file}")
-    if is_ignored_metadata(model_path, root):
-        raise SystemExit(f"model file points to ignored metadata: {args.model_file}")
-    if not model_path.is_file():
-        raise SystemExit(f"model file missing: {model_path}")
+    primary = artifact_entry(root, args.model_file)
+    artifacts = [primary]
+    for extra in args.extra_file:
+        entry = artifact_entry(root, extra)
+        if any(existing["path"] == entry["path"] for existing in artifacts):
+            raise SystemExit(f"duplicate model pack artifact: {entry['path']}")
+        artifacts.append(entry)
 
-    rel_model_path = model_path.relative_to(root).as_posix()
     manifest = {
         "schema_version": 1,
         "created_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
@@ -65,17 +87,10 @@ def main() -> None:
             "id": args.model_id,
             "provider": args.provider,
             "role": args.role,
-            "path": rel_model_path,
+            "path": primary["path"],
             "required": False,
         },
-        "artifacts": [
-            {
-                "path": rel_model_path,
-                "kind": "file",
-                "sha256": sha256(model_path),
-                "bytes": model_path.stat().st_size,
-            }
-        ],
+        "artifacts": artifacts,
     }
     (root / "model-pack-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 

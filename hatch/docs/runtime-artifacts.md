@@ -80,7 +80,7 @@ absent, it stages `../monoclaw-runtime/optional-skills` as the offline official
 Skills Hub catalog. The assembler verifies both trees against the runtime
 checkout before writing `hatch-manifest.json`.
 
-If `bundle-inputs/vendor/models/gemma-4-e4b/gemma-4-e4b.gguf` exists, the
+If `bundle-inputs/vendor/models/gemma-4-e4b/gemma-4-E4B-it-Q4_K_M.gguf` exists, the
 assembler creates an optional sibling sidecar at
 `model-packs/gemma-4-e4b/`. That model pack is not part of the core
 `dist/hatch-manifest.json`; it has its own `model-pack-manifest.json` and is
@@ -186,7 +186,8 @@ dist/
 model-packs/
   gemma-4-e4b/
     model-pack-manifest.json
-    gemma-4-e4b.gguf
+    gemma-4-E4B-it-Q4_K_M.gguf
+    mmproj-gemma-4-E4B-it-f16.gguf
 
 tool-packs/
   mona-secretary-tools/
@@ -418,6 +419,6 @@ Optional local inference readiness is checked separately with
 `hatch verify-local-inference`. Optional Gemma model packs are verified with
 `hatch --model-pack-root <pack> verify-model-pack` and staged with
 `hatch --model-pack-root <pack> install-model` or the generated
-`dist/install-gemma-model.sh` wrapper. Hatch copies the model into
-`~/.monoclaw/vendor/models/gemma-4-e4b/` and prints manual LM Studio import
-instructions.
+`dist/install-gemma-model.sh` wrapper. LM Studio must already be installed at
+`/Applications/LM Studio.app`. Hatch copies the chat GGUF and mmproj into
+`~/.lmstudio/models/lmstudio-community/gemma-4-E4B-it-GGUF/` for auto-discovery.

@@ -84,8 +84,9 @@ When changing Hatch dependency or bootstrap logic:
 Both must exit 0 for `run_verify` to pass. A file-presence-only verify that hides
 a broken runtime is worse than no check. Do not regress these back to `test -x` checks.
 
-After install, technicians run `monoclaw provision` (not `monoclaw setup system`)
-for the complete first-run onboarding wizard with per-step verification.
+After install, `./install.sh` auto-runs `monoclaw provision --non-interactive`
+(technician-side, identity-free). End users run `monoclaw onboard` for personal
+credentials, messaging, and email setup.
 
 ### Hybrid Brew / Bundle Resolution For Non-Python Tools
 

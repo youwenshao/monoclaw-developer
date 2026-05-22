@@ -52,49 +52,39 @@ if [[ -f "${DIST_ROOT}/install-skill-deps.sh" ]]; then
   fi
 fi
 
-# ── Post-install provision prompt ──────────────────────────────────────────
-# ``monoclaw provision`` is the canonical first-run onboarding wizard. It
-# walks every setup section (model → tools → gateway → system → agent) in
-# order and runs a live verification probe after each step. The old
-# ``monoclaw setup system`` command remains available as a targeted re-entry
-# point but is no longer the primary post-install instruction.
+# ── Post-install technician provision ────────────────────────────────────────
+# ``monoclaw provision --non-interactive`` applies identity-free system defaults
+# (Mona plugin, skill-deps, core dependencies, agent defaults). Every shipped
+# Mac should be identical with no personal credentials.
 #
-# We only offer to launch it when both stdin and stdout are interactive
-# terminals. Headless CI, remote SSH without PTY, or non-interactive scripts
-# must run ``monoclaw provision`` manually — the wizard cannot prompt for
-# secrets or drive upstream sub-wizards (himalaya account configure, etc.)
-# without an attached TTY.
+# End users run ``monoclaw onboard`` after receiving the Mac to configure model
+# credentials, messaging platforms, email, and macOS permissions.
 #
-# Set HATCH_AUTO_PROVISION=0 to suppress this prompt entirely (e.g. in bench
+# Set HATCH_AUTO_PROVISION=0 to skip the automatic provision step (e.g. bench
 # automation that provisions via a separate Ansible step).
 if [[ "${HATCH_INSTALL_DRY_RUN:-0}" == "1" ]]; then
-  printf '\n  dry-run: would prompt to run monoclaw provision now\n'
+  printf '\n  dry-run: would run monoclaw provision --non-interactive\n'
 elif [[ "${HATCH_AUTO_PROVISION:-1}" == "0" ]]; then
-  printf '\n  info: HATCH_AUTO_PROVISION=0; skipping provision prompt.\n'
-  printf '  info: Run "monoclaw provision" manually to complete setup.\n'
-elif [[ -t 0 && -t 1 ]]; then
-  printf '\n'
-  printf '  MonoClaw is installed.\n'
-  printf '  Run "monoclaw provision" now to configure your email account,\n'
-  printf '  secretary tools, credentials, and core dependencies? [Y/n] '
-  read -r _PROVISION_ANSWER
-  if [[ -z "${_PROVISION_ANSWER}" ]] || [[ "${_PROVISION_ANSWER}" =~ ^[Yy] ]]; then
-    # Ensure the shim is on PATH before we try to run it. The shell that
-    # launched install.sh may not have sourced ~/.profile yet.
-    export PATH="${HOME}/.local/bin:${PATH}"
-    if command -v monoclaw >/dev/null 2>&1; then
-      if ! monoclaw provision; then
-        printf '\n  warning: provision finished with issues.\n' >&2
-        printf '  info: Run "monoclaw doctor" any time to re-diagnose.\n' >&2
-      fi
-    else
-      printf '  warning: monoclaw shim not found on PATH.\n' >&2
-      printf '  info: Open a new terminal and run "monoclaw provision" manually.\n' >&2
+  printf '\n  info: HATCH_AUTO_PROVISION=0; skipping automatic provision.\n'
+  printf '  info: Run "monoclaw provision --non-interactive" before shipping.\n'
+else
+  export PATH="${HOME}/.local/bin:${PATH}"
+  if command -v monoclaw >/dev/null 2>&1; then
+    if ! monoclaw provision --non-interactive; then
+      printf '\n  warning: monoclaw provision --non-interactive reported issues.\n' >&2
+      printf '  info: Run "monoclaw doctor" any time to re-diagnose.\n' >&2
     fi
   else
-    printf '  info: Run "monoclaw provision" in a new terminal when ready.\n'
+    printf '  warning: monoclaw shim not found on PATH.\n' >&2
+    printf '  info: Open a new terminal and run "monoclaw provision --non-interactive".\n' >&2
   fi
-else
-  printf '\n  info: Install complete (non-interactive).\n'
-  printf '  info: Run "monoclaw provision" in an interactive terminal to finish setup.\n'
 fi
+
+cat <<'EOF'
+
+  Provisioning complete. This Mac is ready to ship.
+  When the end user receives it, they should run:
+
+      monoclaw onboard
+
+EOF

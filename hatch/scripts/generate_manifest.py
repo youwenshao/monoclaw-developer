@@ -78,7 +78,7 @@ def find_runtime_wheel(root: Path) -> Path:
 
 
 def collect_models(root: Path) -> list[dict[str, object]]:
-    gemma = root / "vendor" / "models" / "gemma-4-e4b" / "gemma-4-e4b.gguf"
+    gemma = root / "vendor" / "models" / "gemma-4-e4b" / "gemma-4-E4B-it-Q4_K_M.gguf"
     if not gemma.is_file():
         return []
     return [
@@ -86,7 +86,7 @@ def collect_models(root: Path) -> list[dict[str, object]]:
             "id": "local:gemma4:e4b",
             "provider": "lm-studio",
             "role": "chat",
-            "path": "vendor/models/gemma-4-e4b/gemma-4-e4b.gguf",
+            "path": "vendor/models/gemma-4-e4b/gemma-4-E4B-it-Q4_K_M.gguf",
             "required": False,
         }
     ]

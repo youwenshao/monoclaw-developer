@@ -41,7 +41,9 @@ Hatch verifies `hatch-manifest.json`, and customer Macs receive managed files
 under `~/.monoclaw/vendor` while preserving `~/.monoclaw/customer`. Hatch also
 creates a managed runtime venv, installs the bundled wheel with the
 `local-office` extra, writes a `~/.local/bin/monoclaw` shim, and hands the
-technician to `monoclaw setup` for customer-specific initialization.
+technician to `monoclaw onboard` for end-user initialization. `./install.sh`
+auto-runs `monoclaw provision --non-interactive` for identity-free technician
+setup before shipping.
 If `~/.monoclaw/.env` or `~/.monoclaw/config.yaml` already exists, Hatch keeps
 those files instead of overwriting technician or customer configuration.
 
@@ -67,7 +69,8 @@ bundle-inputs/
     launchd/       # optional
     models/        # optional model-pack inputs, not staged into core dist
       gemma-4-e4b/
-        gemma-4-e4b.gguf
+        gemma-4-E4B-it-Q4_K_M.gguf
+        mmproj-gemma-4-E4B-it-f16.gguf
 ```
 
 The builder stages these files into `dist/`, builds the runtime dashboard assets
@@ -128,7 +131,7 @@ Release evidence and physical bench expectations are listed in
 - Make terminal-manageable setup automatic.
 - Explain manual prerequisites such as Xcode CLT prompts and Docker Desktop.
 - Keep local model weights and vendor bundles in managed directories.
-- Install the bundled runtime so `monoclaw setup` is available without a source
+- Install the bundled runtime so `monoclaw onboard` is available without a source
   checkout.
 - Stop and uninstall existing MonoClaw or legacy runtime services before
   replacing runtime files.
@@ -144,6 +147,6 @@ Release evidence and physical bench expectations are listed in
 - It does not install GUI apps such as LM Studio or Docker Desktop. Technicians
   install those manually from their official `.dmg` packages when required.
 - It does not collect customer secrets or messaging credentials; technicians use
-  `monoclaw setup` for those choices.
+  `monoclaw onboard` for those choices.
 - It does not mutate launchd services until finalized plists are shipped and
   service installation is enabled.

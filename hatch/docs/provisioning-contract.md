@@ -9,8 +9,9 @@ non-technical office worker.
 - Optional local inference readiness checks and optional Gemma 4 E4B model-pack
   staging when the sidecar is present on the provisioning medium.
 - Agent skills, tools, and default workspace bootstrap.
-- Technician handoff to `monoclaw setup` for secrets, messaging, and
-  customer-specific configuration.
+- Technician handoff: `./install.sh` auto-runs `monoclaw provision
+  --non-interactive` (identity-free system defaults). End users run
+  `monoclaw onboard` for secrets, messaging, email, and macOS permissions.
 - launchd service lifecycle for MonoClaw-managed processes after finalized
   plists are shipped.
 - Existing MonoClaw and legacy runtime gateway cleanup for repeated bench runs.
@@ -62,7 +63,8 @@ customer choices. A successful install should end with a clear handoff:
 
 ```bash
 monoclaw --version
-monoclaw setup
+monoclaw provision --non-interactive   # technician (auto-run by install.sh)
+monoclaw onboard                       # end user after receiving the Mac
 ```
 
 ## Safety Defaults

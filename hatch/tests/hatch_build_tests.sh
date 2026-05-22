@@ -22,7 +22,8 @@ mkdir -p \
   "${RUNTIME}/optional-skills/research/deep-research" \
   "${HOME_DIR}"
 
-printf 'Gemma 4 E4B GGUF placeholder\n' > "${INPUTS}/vendor/models/gemma-4-e4b/gemma-4-e4b.gguf"
+printf 'Gemma 4 E4B GGUF placeholder\n' > "${INPUTS}/vendor/models/gemma-4-e4b/gemma-4-E4B-it-Q4_K_M.gguf"
+printf 'Gemma 4 E4B mmproj placeholder\n' > "${INPUTS}/vendor/models/gemma-4-e4b/mmproj-gemma-4-E4B-it-f16.gguf"
 printf 'dependency wheel placeholder\n' > "${INPUTS}/vendor/wheelhouse/dependency-0.0.0-py3-none-any.whl"
 cat > "${INPUTS}/vendor/provisioning/monoclaw-provisioning-lock.json" <<'JSON'
 {
@@ -79,7 +80,6 @@ stage_mona_tools_inputs() {
     "${input_root}/vendor/mona-tools/prebuilt/node/apps/macos-automator-mcp/dist" \
     "${input_root}/vendor/mona-tools/prebuilt/config" \
     "${input_root}/vendor/mona-tools/prebuilt/plugins/mona-secretary-tools" \
-    "${input_root}/vendor/mona-tools/prebuilt/skills/gmail-assistant" \
     "${input_root}/vendor/mona-tools/prebuilt/docs"
 
   cat > "${input_root}/vendor/mona-tools/prebuilt/bin/wacrawl" <<'SH'
@@ -97,7 +97,6 @@ SH
   printf '# permissions\n' > "${input_root}/vendor/mona-tools/prebuilt/docs/permissions.md"
   printf 'mcp_servers: {}\n' > "${input_root}/vendor/mona-tools/prebuilt/config/mcp_servers.mona.example.yaml"
   printf 'name: mona-secretary-tools\n' > "${input_root}/vendor/mona-tools/prebuilt/plugins/mona-secretary-tools/plugin.yaml"
-  printf '# skill\n' > "${input_root}/vendor/mona-tools/prebuilt/skills/gmail-assistant/SKILL.md"
   cat > "${input_root}/vendor/mona-tools/tool-lock.json" <<'JSON'
 {
   "schema_version": 1,
@@ -149,10 +148,6 @@ SH
     {
       "source": "vendor/mona-tools/prebuilt/plugins",
       "path": "plugins"
-    },
-    {
-      "source": "vendor/mona-tools/prebuilt/skills",
-      "path": "skills"
     }
   ]
 }
@@ -190,7 +185,8 @@ test -f "${DIST}/vendor/wheelhouse/dependency-0.0.0-py3-none-any.whl"
 test -f "${DIST}/vendor/skills/customer-office/SKILL.md"
 test -f "${DIST}/vendor/optional-skills/research/deep-research/SKILL.md"
 test ! -d "${DIST}/vendor/models"
-test -f "${TMP}/model-packs/gemma-4-e4b/gemma-4-e4b.gguf"
+test -f "${TMP}/model-packs/gemma-4-e4b/gemma-4-E4B-it-Q4_K_M.gguf"
+test -f "${TMP}/model-packs/gemma-4-e4b/mmproj-gemma-4-E4B-it-f16.gguf"
 test -f "${TMP}/model-packs/gemma-4-e4b/model-pack-manifest.json"
 test -f "${TMP}/tool-packs/mona-secretary-tools/tools-pack-manifest.json"
 test -x "${TMP}/tool-packs/mona-secretary-tools/bin/wacrawl"
@@ -257,9 +253,8 @@ grep -q "Using Python ${FAKE_PYTHON} (3.11.9) for runtime bootstrap" "${TMP}/ins
 grep -Fq "dry-run: ${HOME_DIR}/.monoclaw/vendor/runtime/venv/bin/python -m pip install --no-index --find-links ${HOME_DIR}/.monoclaw/vendor/wheelhouse --upgrade pip setuptools wheel" "${TMP}/install.out"
 grep -Fq "dry-run: ${HOME_DIR}/.monoclaw/vendor/runtime/venv/bin/python -m pip install --no-index --find-links ${HOME_DIR}/.monoclaw/vendor/wheelhouse ${HOME_DIR}/.monoclaw/vendor/runtime/monoclaw_runtime-0.1.0-py3-none-any.whl[local-office]" "${TMP}/install.out"
 grep -q "dry-run: cp -R ${TMP}/tool-packs/mona-secretary-tools ${HOME_DIR}/.monoclaw/vendor/mona-tools" "${TMP}/install.out"
-grep -q "dry-run: install Mona secretary skills into ${HOME_DIR}/.monoclaw/skills" "${TMP}/install.out"
 grep -q "dry-run: install Mona secretary plugins into ${HOME_DIR}/.monoclaw/plugins" "${TMP}/install.out"
-grep -q "manual: install LM Studio from the official .dmg if local inference is required" "${TMP}/install.out"
+grep -q "manual: install LM Studio from the official .dmg before ./install-gemma-model.sh" "${TMP}/install.out"
 if grep -q "Skill dependencies pack not found" "${TMP}/install.out"; then
   printf 'install should not warn about a missing skill-deps pack when no pack was built\n' >&2
   exit 1
@@ -318,7 +313,7 @@ if HATCH_INPUT_ROOT="${INPUTS}" \
   exit 1
 fi
 grep -q "unsafe dist root" "${TMP}/unsafe-dist.out"
-test -f "${INPUTS}/vendor/models/gemma-4-e4b/gemma-4-e4b.gguf"
+test -f "${INPUTS}/vendor/models/gemma-4-e4b/gemma-4-E4B-it-Q4_K_M.gguf"
 
 CORE_INPUTS="${TMP}/bundle-inputs-core"
 CORE_DIST="${TMP}/core-dist"
@@ -354,7 +349,8 @@ mkdir -p \
   "${STANDALONE_HATCH}/bundle-inputs/vendor/provisioning" \
   "${STANDALONE_HATCH}/bundle-inputs/vendor/wheelhouse"
 cp -R "${ROOT}/." "${STANDALONE_HATCH}/"
-printf 'standalone Gemma placeholder\n' > "${STANDALONE_HATCH}/bundle-inputs/vendor/models/gemma-4-e4b/gemma-4-e4b.gguf"
+printf 'standalone Gemma placeholder\n' > "${STANDALONE_HATCH}/bundle-inputs/vendor/models/gemma-4-e4b/gemma-4-E4B-it-Q4_K_M.gguf"
+printf 'standalone Gemma mmproj placeholder\n' > "${STANDALONE_HATCH}/bundle-inputs/vendor/models/gemma-4-e4b/mmproj-gemma-4-E4B-it-f16.gguf"
 cp "${FAKE_PYTHON}" "${STANDALONE_HATCH}/bundle-inputs/vendor/python/current/bin/python3"
 cp "${INPUTS}/vendor/provisioning/monoclaw-provisioning-lock.json" "${STANDALONE_HATCH}/bundle-inputs/vendor/provisioning/monoclaw-provisioning-lock.json"
 printf 'standalone dependency wheel placeholder\n' > "${STANDALONE_HATCH}/bundle-inputs/vendor/wheelhouse/dependency-0.0.0-py3-none-any.whl"

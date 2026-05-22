@@ -14,7 +14,6 @@ mkdir -p \
   "${PACK}/node/current/bin" \
   "${PACK}/node/apps/macos-automator-mcp/dist" \
   "${PACK}/plugins/mona-secretary-tools" \
-  "${PACK}/skills/gmail-assistant" \
   "${PACK}/config" \
   "${PACK}/docs" \
   "${HOME_DIR}"
@@ -33,7 +32,6 @@ SH
 chmod +x "${PACK}/node/current/bin/node"
 printf 'automator placeholder\n' > "${PACK}/node/apps/macos-automator-mcp/dist/server.js"
 printf 'plugin: mona-secretary-tools\n' > "${PACK}/plugins/mona-secretary-tools/plugin.yaml"
-printf '# skill\n' > "${PACK}/skills/gmail-assistant/SKILL.md"
 printf 'mcp_servers: {}\n' > "${PACK}/config/mcp_servers.mona.example.yaml"
 printf '# Mona tools\n' > "${PACK}/docs/README.md"
 printf '# Permissions\n' > "${PACK}/docs/permissions.md"
@@ -66,10 +64,9 @@ PATH="/usr/bin:/bin:/usr/sbin:/sbin" HOME="${HOME_DIR}" \
 grep -q "dry-run: rm -rf ${HOME_DIR}/.monoclaw/vendor/mona-tools" "${TMP}/install-tools.out"
 grep -q "dry-run: mkdir -p ${HOME_DIR}/.monoclaw/vendor" "${TMP}/install-tools.out"
 grep -q "dry-run: cp -R ${PACK} ${HOME_DIR}/.monoclaw/vendor/mona-tools" "${TMP}/install-tools.out"
-grep -q "dry-run: install Mona secretary skills into ${HOME_DIR}/.monoclaw/skills" "${TMP}/install-tools.out"
 grep -q "dry-run: install Mona secretary plugins into ${HOME_DIR}/.monoclaw/plugins" "${TMP}/install-tools.out"
 grep -q "manual: review ${HOME_DIR}/.monoclaw/vendor/mona-tools/docs/permissions.md before enabling host automation tools" "${TMP}/install-tools.out"
-grep -q "next: run monoclaw provision to complete first-run onboarding" "${TMP}/install-tools.out"
+grep -q "next: technician provision complete; end user runs: monoclaw onboard" "${TMP}/install-tools.out"
 if grep -q "plugins.enabled" "${TMP}/install-tools.out"; then
   printf 'install-tools should not activate Mona plugins; run monoclaw setup system for reviewed activation\n' >&2
   exit 1
@@ -117,18 +114,15 @@ PATH="/usr/bin:/bin:/usr/sbin:/sbin" HOME="${HOME_DIR}" \
   bash "${ROOT}/bin/hatch" --apply --tools-pack-root "${PACK}" install-tools | tee "${TMP}/apply-tools.out"
 test -f "${HOME_DIR}/.monoclaw/vendor/mona-tools/tools-pack-manifest.json"
 test -x "${HOME_DIR}/.monoclaw/vendor/mona-tools/bin/wacrawl"
-test -f "${HOME_DIR}/.monoclaw/skills/gmail-assistant/SKILL.md"
+test ! -d "${PACK}/skills"
 test -f "${HOME_DIR}/.monoclaw/plugins/mona-secretary-tools/plugin.yaml"
 grep -q "Mona secretary tools installed" "${TMP}/apply-tools.out"
 test ! -f "${HOME_DIR}/.monoclaw/config.yaml"
 
-printf 'existing skill\n' > "${HOME_DIR}/.monoclaw/skills/gmail-assistant/SKILL.md"
 printf 'existing plugin\n' > "${HOME_DIR}/.monoclaw/plugins/mona-secretary-tools/plugin.yaml"
 PATH="/usr/bin:/bin:/usr/sbin:/sbin" HOME="${HOME_DIR}" \
   bash "${ROOT}/bin/hatch" --apply --tools-pack-root "${PACK}" install-tools >"${TMP}/apply-tools-again.out"
-grep -q "Keeping existing skill ${HOME_DIR}/.monoclaw/skills/gmail-assistant" "${TMP}/apply-tools-again.out"
 grep -q "Keeping existing plugin ${HOME_DIR}/.monoclaw/plugins/mona-secretary-tools" "${TMP}/apply-tools-again.out"
-grep -q "existing skill" "${HOME_DIR}/.monoclaw/skills/gmail-assistant/SKILL.md"
 grep -q "existing plugin" "${HOME_DIR}/.monoclaw/plugins/mona-secretary-tools/plugin.yaml"
 
 DISABLE_HOME="${TMP}/home-plugin-disabled"
@@ -368,8 +362,7 @@ mkdir -p \
   "${PREP_FIXTURES}/apps/vox/dist" \
   "${PREP_FIXTURES}/docs" \
   "${PREP_FIXTURES}/config" \
-  "${PREP_FIXTURES}/plugins/mona-secretary-tools" \
-  "${PREP_FIXTURES}/skills/gmail-assistant"
+  "${PREP_FIXTURES}/plugins/mona-secretary-tools"
 cat > "${PREP_FIXTURES}/node/current/bin/node" <<'SH'
 #!/usr/bin/env bash
 printf 'v26.0.0\n'
@@ -385,7 +378,6 @@ printf 'vox cli fixture\n' > "${PREP_FIXTURES}/apps/vox/dist/cli.js"
 printf '# prep permissions\n' > "${PREP_FIXTURES}/docs/permissions.md"
 printf 'mcp_servers: {}\n' > "${PREP_FIXTURES}/config/mcp_servers.mona.example.yaml"
 printf 'name: mona-secretary-tools\n' > "${PREP_FIXTURES}/plugins/mona-secretary-tools/plugin.yaml"
-printf '# prep skill\n' > "${PREP_FIXTURES}/skills/gmail-assistant/SKILL.md"
 cat > "${PREP_INPUTS}/vendor/mona-tools/source-lock.json" <<JSON
 {
   "schema_version": 1,
@@ -467,10 +459,6 @@ cat > "${PREP_INPUTS}/vendor/mona-tools/source-lock.json" <<JSON
     {
       "source": "${PREP_FIXTURES}/plugins",
       "path": "plugins"
-    },
-    {
-      "source": "${PREP_FIXTURES}/skills",
-      "path": "skills"
     }
   ]
 }
@@ -561,10 +549,6 @@ cat > "${AUTO_PREP_INPUTS}/vendor/mona-tools/source-lock.json" <<JSON
     {
       "source": "${PREP_FIXTURES}/plugins",
       "path": "plugins"
-    },
-    {
-      "source": "${PREP_FIXTURES}/skills",
-      "path": "skills"
     }
   ]
 }
@@ -626,6 +610,7 @@ test -f "${BUILT_PACK}/node/apps/vox/dist/cli.js"
 test -f "${BUILT_PACK}/docs/permissions.md"
 test -f "${BUILT_PACK}/config/mcp_servers.mona.example.yaml"
 test -f "${BUILT_PACK}/plugins/mona-secretary-tools/plugin.yaml"
+test ! -d "${BUILT_PACK}/skills"
 test ! -e "${BUILT_PACK}/brabble"
 test -f "${BUILT_PACK}/tools-pack-manifest.json"
 grep -q "Tools pack verified for mona-secretary-tools" "${TMP}/build-enabled.out"

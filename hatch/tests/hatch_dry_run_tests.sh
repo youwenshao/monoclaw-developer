@@ -35,6 +35,7 @@ printf 'wheel placeholder\n' > "${BUNDLE}/runtime/${WHEEL_NAME}"
 printf 'skill placeholder\n' > "${BUNDLE}/vendor/skills/customer-office/SKILL.md"
 printf 'optional skill placeholder\n' > "${BUNDLE}/vendor/optional-skills/research/deep-research/SKILL.md"
 printf 'pip wheel placeholder\n' > "${BUNDLE}/vendor/wheelhouse/pip-24.0-py3-none-any.whl"
+printf 'license placeholder\n' > "${BUNDLE}/LICENSE.md"
 
 SHA="$(shasum -a 256 "${BUNDLE}/runtime/about.md" | awk '{print $1}')"
 BYTES="$(wc -c < "${BUNDLE}/runtime/about.md" | tr -d ' ')"
@@ -46,6 +47,8 @@ OPTIONAL_SKILL_SHA="$(shasum -a 256 "${BUNDLE}/vendor/optional-skills/research/d
 OPTIONAL_SKILL_BYTES="$(wc -c < "${BUNDLE}/vendor/optional-skills/research/deep-research/SKILL.md" | tr -d ' ')"
 WHEELHOUSE_SHA="$(shasum -a 256 "${BUNDLE}/vendor/wheelhouse/pip-24.0-py3-none-any.whl" | awk '{print $1}')"
 WHEELHOUSE_BYTES="$(wc -c < "${BUNDLE}/vendor/wheelhouse/pip-24.0-py3-none-any.whl" | tr -d ' ')"
+LICENSE_SHA="$(shasum -a 256 "${BUNDLE}/LICENSE.md" | awk '{print $1}')"
+LICENSE_BYTES="$(wc -c < "${BUNDLE}/LICENSE.md" | tr -d ' ')"
 
 cat > "${BUNDLE}/hatch-manifest.json" <<JSON
 {
@@ -103,6 +106,12 @@ cat > "${BUNDLE}/hatch-manifest.json" <<JSON
       "kind": "file",
       "sha256": "${WHEELHOUSE_SHA}",
       "bytes": ${WHEELHOUSE_BYTES}
+    },
+    {
+      "path": "LICENSE.md",
+      "kind": "file",
+      "sha256": "${LICENSE_SHA}",
+      "bytes": ${LICENSE_BYTES}
     }
   ]
 }
@@ -148,9 +157,10 @@ VERIFY_LINE="$(awk '/Checking prepared Hatch bundle/{print NR; exit}' "${TMP}/in
 HOMEBREW_LINE="$(awk '/install Homebrew with official installer/{print NR; exit}' "${TMP}/install.out")"
 test "${VERIFY_LINE}" -lt "${HOMEBREW_LINE}"
 grep -q "dry-run: mkdir -p ${HOME_DIR}/.monoclaw/vendor" "${TMP}/install.out"
-grep -q "dry-run: leave ${HOME_DIR}/.monoclaw/.env for monoclaw setup" "${TMP}/install.out"
-grep -q "dry-run: leave ${HOME_DIR}/.monoclaw/config.yaml for monoclaw setup" "${TMP}/install.out"
+grep -q "dry-run: leave ${HOME_DIR}/.monoclaw/.env for monoclaw onboard" "${TMP}/install.out"
+grep -q "dry-run: leave ${HOME_DIR}/.monoclaw/config.yaml for monoclaw onboard" "${TMP}/install.out"
 grep -q "dry-run: cp ${BUNDLE}/hatch-manifest.json ${HOME_DIR}/.monoclaw/vendor/hatch-manifest.json" "${TMP}/install.out"
+grep -q "dry-run: cp ${BUNDLE}/LICENSE.md ${HOME_DIR}/.monoclaw/LICENSE.md" "${TMP}/install.out"
 grep -q "dry-run: cp -R ${BUNDLE}/runtime ${HOME_DIR}/.monoclaw/vendor/runtime" "${TMP}/install.out"
 grep -q "dry-run: cp -R ${BUNDLE}/vendor/optional-skills ${HOME_DIR}/.monoclaw/vendor/optional-skills" "${TMP}/install.out"
 grep -q "Using Python ${FAKE_PYTHON} (3.11.9) for runtime bootstrap" "${TMP}/install.out"
@@ -160,12 +170,12 @@ grep -Fq "dry-run: ${HOME_DIR}/.monoclaw/vendor/runtime/venv/bin/python -m pip i
 grep -Fq "dry-run: ${HOME_DIR}/.monoclaw/vendor/runtime/venv/bin/python -m pip install --no-index --find-links ${HOME_DIR}/.monoclaw/vendor/wheelhouse ${HOME_DIR}/.monoclaw/vendor/runtime/.hatch-install/${PIP_WHEEL_NAME}[local-office]" "${TMP}/install.out"
 grep -q "dry-run: write ${HOME_DIR}/.local/bin/monoclaw shim" "${TMP}/install.out"
 grep -q "dry-run: install bundled skills into ${HOME_DIR}/.monoclaw/skills" "${TMP}/install.out"
-grep -q "manual: install LM Studio from the official .dmg if local inference is required" "${TMP}/install.out"
+grep -q "manual: install LM Studio from the official .dmg before ./install-gemma-model.sh" "${TMP}/install.out"
 if grep -q "lmstudio.ai/install.sh" "${TMP}/install.out"; then
   printf 'install should not script LM Studio installation\n' >&2
   exit 1
 fi
-grep -q "complete setup with: monoclaw provision" "${TMP}/install.out"
+grep -q "ship this Mac — end user runs: monoclaw onboard" "${TMP}/install.out"
 
 run_hatch_with_broken_ensurepip install | tee "${TMP}/install-broken-ensurepip.out"
 grep -q "Bundled Python failed to create a pip-capable venv; rebuild the bundle with a working Python runtime" "${TMP}/install-broken-ensurepip.out"
@@ -221,6 +231,10 @@ run_hatch install | tee "${TMP}/existing-config-install.out"
 grep -q "dry-run: keep existing ${HOME_DIR}/.monoclaw/.env" "${TMP}/existing-config-install.out"
 grep -q "dry-run: keep existing ${HOME_DIR}/.monoclaw/config.yaml" "${TMP}/existing-config-install.out"
 
+# Verify the uninstall wizard prompt is offered when a healthy prior install is on PATH.
+run_hatch_with_local_bin install | tee "${TMP}/existing-healthy-install.out"
+grep -q "dry-run: existing MonoClaw install detected; would offer uninstall wizard" "${TMP}/existing-healthy-install.out"
+
 # Regression: broken shim (shim exists but venv binary absent) must not crash cleanup.
 # This reproduces the scenario where a previous install failed at the pip step (e.g.
 # a missing wheel), leaving install_runtime_assets having deleted the old venv while
@@ -247,7 +261,8 @@ grep -q "bundled skills installed" "${TMP}/verify.out"
 
 run_hatch verify-local-inference | tee "${TMP}/verify-local.out"
 grep -q "Checking optional local inference readiness" "${TMP}/verify-local.out"
-grep -q "Gemma 4 E4B model is missing" "${TMP}/verify-local.out"
+grep -q "Gemma 4 E4B chat weights missing" "${TMP}/verify-local.out"
+grep -q "Gemma 4 E4B mmproj missing" "${TMP}/verify-local.out"
 
 run_hatch doctor | tee "${TMP}/doctor.out"
 grep -q "Hatch doctor complete" "${TMP}/doctor.out"

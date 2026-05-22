@@ -1,5 +1,18 @@
 # Provision Sub-Wizards & Brew-First / Bundle-Fallback Pivot
 
+> **Superseded for Himalaya (May 2026):** The Himalaya section of this plan
+> (§4.1 and §6 sub-wizard mechanism) was superseded by
+> `plans/himalaya-keychain-fix.plan.md`. The "delegate to `himalaya account
+> configure` then react" architecture was found to be structurally broken:
+> the bundled v1.2.0 binary lacks the `keyring` cargo feature, and even with
+> it, `keyring-rs` historically falls back to a silent mock on macOS. Email
+> account setup now lives in `monoclaw_cli.setup_email` (`monoclaw setup email`
+> / `monoclaw setup himalaya`), which owns password collection, Keychain seeding
+> with `-T` ACLs, round-trip verification, TOML generation, and a real IMAP
+> probe. `HimalayaSubWizard.run()` now redirects to `monoclaw setup email`
+> instead of spawning the upstream wizard. The rest of this plan (other
+> secretary tools, core-deps sub-wizards, brew-first policy) is still in force.
+
 Plan for fixing the Himalaya regression, harmonising bundled tool installs, and
 making `monoclaw provision` drive each tool's **official** wizard as a
 sub-wizard rather than re-implementing setup ourselves.

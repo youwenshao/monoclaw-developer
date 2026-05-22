@@ -212,8 +212,17 @@ copy_optional_vendor_asset() {
 }
 
 stage_model_packs() {
-  local source_model="${HATCH_INPUT_ROOT}/vendor/models/gemma-4-e4b/gemma-4-e4b.gguf"
+  local model_dir="${HATCH_INPUT_ROOT}/vendor/models/gemma-4-e4b"
+  local source_model="${model_dir}/gemma-4-E4B-it-Q4_K_M.gguf"
+  local source_mmproj="${model_dir}/mmproj-gemma-4-E4B-it-f16.gguf"
   local pack_root="${HATCH_MODEL_PACKS_ROOT}/gemma-4-e4b"
+  local manifest_args=(
+    --model-pack-root "${pack_root}"
+    --model-id "local:gemma4:e4b"
+    --provider "lm-studio"
+    --role "chat"
+    --model-file "gemma-4-E4B-it-Q4_K_M.gguf"
+  )
 
   rm -rf "${pack_root}"
   if [[ ! -f "${source_model}" ]]; then
@@ -223,13 +232,14 @@ stage_model_packs() {
 
   log "Staging optional Gemma 4 E4B model pack"
   mkdir -p "${pack_root}"
-  cp "${source_model}" "${pack_root}/gemma-4-e4b.gguf"
-  python3 "${HATCH_ROOT}/scripts/generate_model_pack_manifest.py" \
-    --model-pack-root "${pack_root}" \
-    --model-id "local:gemma4:e4b" \
-    --provider "lm-studio" \
-    --role "chat" \
-    --model-file "gemma-4-e4b.gguf"
+  cp "${source_model}" "${pack_root}/gemma-4-E4B-it-Q4_K_M.gguf"
+  if [[ -f "${source_mmproj}" ]]; then
+    cp "${source_mmproj}" "${pack_root}/mmproj-gemma-4-E4B-it-f16.gguf"
+    manifest_args+=(--extra-file "mmproj-gemma-4-E4B-it-f16.gguf")
+  else
+    log "warn: mmproj-gemma-4-E4B-it-f16.gguf missing; model pack will ship without vision projector"
+  fi
+  python3 "${HATCH_ROOT}/scripts/generate_model_pack_manifest.py" "${manifest_args[@]}"
 }
 
 stage_mona_tools_pack() {
@@ -488,6 +498,7 @@ stage_bundle() {
   cp "${HATCH_ROOT}/templates/install.sh" "${HATCH_DIST_ROOT}/install.sh"
   cp "${HATCH_ROOT}/templates/install-gemma-model.sh" "${HATCH_DIST_ROOT}/install-gemma-model.sh"
   cp "${HATCH_ROOT}/templates/install-mona-tools.sh" "${HATCH_DIST_ROOT}/install-mona-tools.sh"
+  cp "${HATCH_ROOT}/templates/LICENSE.md" "${HATCH_DIST_ROOT}/LICENSE.md"
   cp "${HATCH_ROOT}/tests/hatch_dry_run_tests.sh" "${HATCH_DIST_ROOT}/tests/run-hatch-dry-run.sh"
   chmod +x "${HATCH_DIST_ROOT}/bin/hatch" "${HATCH_DIST_ROOT}/install.sh" "${HATCH_DIST_ROOT}/install-gemma-model.sh" "${HATCH_DIST_ROOT}/install-mona-tools.sh" "${HATCH_DIST_ROOT}/tests/run-hatch-dry-run.sh"
   _hatch_build_test_fail_maybe after_templates

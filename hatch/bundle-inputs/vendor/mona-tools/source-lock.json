@@ -212,10 +212,6 @@
     {
       "source": "templates/plugins",
       "path": "plugins"
-    },
-    {
-      "source": "templates/skills",
-      "path": "skills"
     }
   ]
 }

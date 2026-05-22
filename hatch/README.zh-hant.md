@@ -53,7 +53,8 @@ bundle-inputs/
     launchd/       # 可選
     models/        # 可選模型包輸入，不預備到核心 dist
       gemma-4-e4b/
-        gemma-4-e4b.gguf
+        gemma-4-E4B-it-Q4_K_M.gguf
+        mmproj-gemma-4-E4B-it-f16.gguf
 ```
 
 構建器會將這些檔案預備到 `dist/` 中，從 `../monoclaw-runtime` 構建執行環境儀表板資產和 Python wheel，寫入包含構件大小和 SHA-256 雜湊的 `hatch-manifest.json`，並在返回前驗證安裝包。如果沒有精選的 `bundle-inputs/vendor/skills` 目錄樹，構建器會預備執行環境檢出的捆綁 `skills/` 目錄樹。將生成的 `dist/` 目錄複製到配置隨身碟。預設情況下，構建器還會在 `dist/` 旁邊寫入一個並排的 `tool-packs/mona-secretary-tools/` 目錄（Mona 秘書工具 sidecar，不在 `dist/` 內）。將該並排目錄複製到隨身碟上 `dist/` 的旁邊，以便 `dist/install-mona-tools.sh` 可以在 `./install.sh` 之後運行；只有當你以 `HATCH_INCLUDE_MONA_TOOLS=0` 構建或在目標上用 `HATCH_INSTALL_MONA_TOOLS=0` 略過安裝時的 Mona 時，才省略它。當存在可選的 Gemma 輸入時，構建器會在 `dist/` 旁邊寫入一個並排的 `model-packs/gemma-4-e4b/` 目錄，並帶有自己的 `model-pack-manifest.json`；如果你想避免在目標 Mac 上下載模型，請將該並排目錄複製到隨身碟上 `dist/` 的旁邊。

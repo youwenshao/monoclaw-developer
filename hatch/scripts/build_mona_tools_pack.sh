@@ -209,6 +209,10 @@ for item in data.get("extra_artifacts", []):
     rel_path = str(item.get("path", "")).strip()
     if not source or not rel_path:
         raise SystemExit("Mona tools extra_artifacts entries require source and path")
+    if rel_path == "skills":
+        raise SystemExit(
+            "Mona pack must not carry skills; ship via monoclaw-runtime/skills/"
+        )
     copy_path(resolve_input(source), pack_destination(rel_path))
 
 (pack_root / ".mona-tools-active.json").write_text(

@@ -69,7 +69,7 @@ Recommended V1 contents:
 - built `macos-automator-mcp` app
 - opt-in built `vox` app for an operator-supervised phone bridge service
 - optional built `conduit-mcp` and `ghcrawl` apps
-- `templates/` docs, config examples, plugin skeleton, and curated skills
+- `templates/` docs, config examples, and plugin skeleton (skills ship via `monoclaw-runtime/skills/`)
 
 Keep secrets out of this directory. Slack, WhatsApp, GitHub, Google, OpenAI,
 Twilio, and X/Twitter credentials belong in customer configuration, never in
