@@ -33,6 +33,23 @@ else
   fi
 fi
 
+if [[ "${HATCH_INSTALL_GEMMA_MODEL:-1}" != "1" ]]; then
+  printf '  info: skipping Gemma model pack because HATCH_INSTALL_GEMMA_MODEL=0\n'
+else
+  if ! bash "${DIST_ROOT}/install-gemma-model.sh" 2>&1; then
+    # Distinguish "pack not present" (normal skip — warn only) from
+    # "pack present but installer failed" (fail in strict mode).
+    GEMMA_PACK_ROOT="$(dirname "${DIST_ROOT}")/model-packs/gemma-4-e4b"
+    if [[ -d "${GEMMA_PACK_ROOT}" ]] && [[ "${HATCH_INSTALL_STRICT}" == "1" ]]; then
+      printf '  error: Gemma model pack installation failed (HATCH_INSTALL_STRICT=1).\n' >&2
+      printf '  error: The pack is present but the installer failed (install LM Studio from the official .dmg first). Set HATCH_INSTALL_STRICT=0 to continue anyway.\n' >&2
+      exit 1
+    else
+      printf '  warning: Gemma model pack installation failed; core MonoClaw runtime remains installed\n' >&2
+    fi
+  fi
+fi
+
 if [[ "${HATCH_INSTALL_SKILL_DEPS:-1}" != "1" ]]; then
   printf '  info: skipping skill dependencies pack because HATCH_INSTALL_SKILL_DEPS=0\n'
   exit 0

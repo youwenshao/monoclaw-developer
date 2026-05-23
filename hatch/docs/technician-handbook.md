@@ -43,9 +43,10 @@ cd /Volumes/<YOUR_PENDRIVE>/dist
 ./install.sh
 ```
 
-`install.sh` does two things automatically:
+`install.sh` runs these steps automatically:
 1. Installs the core MonoClaw runtime, skills, and command shim.
 2. Installs the Mona secretary tools sidecar (unless `HATCH_INSTALL_MONA_TOOLS=0`).
+3. Stages the Gemma 4 model pack into LM Studio when `model-packs/gemma-4-e4b/` is beside `dist/` (unless `HATCH_INSTALL_GEMMA_MODEL=0`). Install LM Studio from the official `.dmg` **before** `./install.sh` when local inference is in the contract.
 
 **You do not need to pass `--apply`.** The generated `install.sh` already applies changes.
 
@@ -138,26 +139,22 @@ Sections: `system`, `agent`. Use `--non-interactive` for headless verification.
 
 ### If Local Inference Was Configured
 
-1. Install LM Studio from the official `.dmg` **before** running `./install-gemma-model.sh` (required).
-2. Launch LM Studio once and complete its first-run setup.
-3. If the model pack is on the pendrive, run:
-   ```bash
-   cd /Volumes/<YOUR_PENDRIVE>/dist
-   ./install-gemma-model.sh
-   ```
-   This copies the chat GGUF and vision projector (mmproj) into LM Studio's native models directory:
+1. Install LM Studio from the official `.dmg` **before** running `./install.sh` (required when the model pack is on the pendrive).
+2. Run `./install.sh` as usual. When `model-packs/gemma-4-e4b/` is beside `dist/`, the installer copies the chat GGUF and vision projector (mmproj) into LM Studio's native models directory:
    ```
    ~/.lmstudio/models/lmstudio-community/gemma-4-E4B-it-GGUF/
      gemma-4-E4B-it-Q4_K_M.gguf
      mmproj-gemma-4-E4B-it-f16.gguf
    ```
-4. Launch LM Studio again; it should auto-discover the bundled models (no manual import step).
-5. Run `monoclaw setup` again (or edit `~/.monoclaw/.env`) to point to the local endpoint:
+3. Launch LM Studio once and complete its first-run setup; it should auto-discover the staged models (no manual import step).
+4. Run `monoclaw setup` again (or edit `~/.monoclaw/.env`) to point to the local endpoint:
    ```
    LM_BASE_URL=http://127.0.0.1:1234/v1
    LM_API_KEY=dummy-lm-api-key
    MONOCLAW_MODEL=local:gemma4:e4b
    ```
+
+To recover a failed model staging step without rerunning the full install, use `./install-gemma-model.sh`.
 
 ### If Mona Secretary Tools Were Installed
 
@@ -208,8 +205,9 @@ This removes and replaces `~/.monoclaw/vendor/` but still preserves `customer/`,
 | `Python 3.11+ runtime interpreter missing` | The bundle was copied without `vendor/python/` | Rebuild or recopy the bundle from the assembly machine |
 | `Bundled wheelhouse is required for production runtime bootstrap` | The bundle was built without `bash scripts/build_wheelhouse.sh` | Return to assembly machine and rebuild |
 | `Mona secretary tools installation failed; core MonoClaw runtime remains installed` | `tool-packs/mona-secretary-tools/` was not copied to the pendrive | Copy the sidecar and rerun `./install.sh`, or set `HATCH_INSTALL_MONA_TOOLS=0` to skip intentionally |
+| `Gemma model pack installation failed (HATCH_INSTALL_STRICT=1)` | `model-packs/gemma-4-e4b/` is present but LM Studio is not installed (or the pack failed verification) | Install LM Studio from `.dmg`, then rerun `./install.sh`, or set `HATCH_INSTALL_STRICT=0` only for a deliberate partial install |
 | `Xcode Command Line Tools are missing` | CLT not installed or macOS prompt not completed | Run `xcode-select --install`, complete the GUI prompt, then rerun `./install.sh` |
-| `LM Studio app is missing` | Customer contract includes local inference but LM Studio was not installed | Install LM Studio from `.dmg`, then rerun `monoclaw setup` |
+| `LM Studio app is missing` | Customer contract includes local inference but LM Studio was not installed | Install LM Studio from `.dmg`, then rerun `./install.sh` |
 
 ### Offline or Air-Gapped Macs
 
@@ -264,4 +262,4 @@ Do not improvise fixes on the target Mac. Escalate when:
 | `bash dist/bin/hatch doctor` | Full Hatch-level diagnostic (runs before `monoclaw` is installed, or when the runtime itself is suspect). |
 | `bash dist/bin/hatch verify` | Check core runtime integrity only. |
 | `bash dist/bin/hatch verify-local-inference` | Check LM Studio + model readiness. |
-| `./install-gemma-model.sh` | Stage the model pack when local inference is enabled. |
+| `./install-gemma-model.sh` | Re-run Gemma model staging after a failed step, or recover without a full `./install.sh`. |

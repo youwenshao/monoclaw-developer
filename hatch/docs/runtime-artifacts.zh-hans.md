@@ -45,7 +45,7 @@ cd /Volumes/<随身碟>/dist
 ./install.sh
 ```
 
-`install.sh` 会生成到预置包中，并调用 `bin/hatch --apply --bundle-root <dist> install`，然后在安装时启用 Mona 工具时运行 `install-mona-tools.sh`（除非 `HATCH_INSTALL_MONA_TOOLS=0`）。
+`install.sh` 会生成到预置包中，并调用 `bin/hatch --apply --bundle-root <dist> install`，然后在安装时启用 Mona 工具时运行 `install-mona-tools.sh`（除非 `HATCH_INSTALL_MONA_TOOLS=0`），并在 Gemma 模型包存在时运行 `install-gemma-model.sh`（除非 `HATCH_INSTALL_GEMMA_MODEL=0`）。当随身碟上有模型包时，LM Studio 必须已安装（否则在 `HATCH_INSTALL_STRICT=1` 下会中止）。
 
 ## 预置包目录结构
 

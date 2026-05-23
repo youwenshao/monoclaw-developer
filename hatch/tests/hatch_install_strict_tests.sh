@@ -39,6 +39,15 @@ exit 1
 SH
 chmod +x "${FAKE_SKILL_DEPS_SH}"
 
+# Create a fake install-gemma-model.sh that always fails
+FAKE_GEMMA_SH="${FAKES}/install-gemma-model.sh"
+cat > "${FAKE_GEMMA_SH}" <<'SH'
+#!/usr/bin/env bash
+printf '  error: fake gemma installer failure\n' >&2
+exit 1
+SH
+chmod +x "${FAKE_GEMMA_SH}"
+
 # Build a test variant of install.sh that skips the main hatch call
 # but keeps the strict/non-strict logic intact
 mkdir -p "${TMP}/dist"
@@ -64,6 +73,20 @@ else
   fi
 fi
 
+if [[ "${HATCH_INSTALL_GEMMA_MODEL:-1}" != "1" ]]; then
+  printf '  info: skipping Gemma model pack\n'
+else
+  if ! bash "${DIST_ROOT}/install-gemma-model.sh" 2>&1; then
+    GEMMA_PACK_ROOT="$(dirname "${DIST_ROOT}")/model-packs/gemma-4-e4b"
+    if [[ -d "${GEMMA_PACK_ROOT}" ]] && [[ "${HATCH_INSTALL_STRICT}" == "1" ]]; then
+      printf '  error: Gemma model pack installation failed (HATCH_INSTALL_STRICT=1).\n' >&2
+      exit 1
+    else
+      printf '  warning: Gemma model pack installation failed\n' >&2
+    fi
+  fi
+fi
+
 if [[ "${HATCH_INSTALL_SKILL_DEPS:-1}" != "1" ]]; then
   printf '  info: skipping skill-deps\n'
   exit 0
@@ -85,6 +108,7 @@ chmod +x "${PATCHED_INSTALL}"
 
 # Copy fake sub-installers next to the patched install script
 cp "${FAKE_MONA_SH}" "${TMP}/dist/install-mona-tools.sh"
+cp "${FAKE_GEMMA_SH}" "${TMP}/dist/install-gemma-model.sh"
 cp "${FAKE_SKILL_DEPS_SH}" "${TMP}/dist/install-skill-deps.sh"
 
 # Create a fake tool-packs directory so the strict logic triggers.
@@ -143,6 +167,31 @@ fi
 if ! grep -q "warning: skill dependencies installation failed" "${TMP}/t4.out"; then
   printf 'FAIL (skill-deps warning missing)\n' >&2
   cat "${TMP}/t4.out" >&2
+  exit 1
+fi
+printf 'ok\n'
+
+# ── Test 5: HATCH_INSTALL_STRICT=1 exits 1 when gemma model pack fails ───
+printf 'test: HATCH_INSTALL_STRICT=1 exits 1 on gemma failure... '
+mkdir -p "${TMP}/tool-packs/gemma-4-e4b"
+if HATCH_INSTALL_MONA_TOOLS=0 HATCH_INSTALL_STRICT=1 bash "${PATCHED_INSTALL}" > "${TMP}/t5.out" 2>&1; then
+  printf 'FAIL (expected exit 1, got 0)\n' >&2
+  cat "${TMP}/t5.out" >&2
+  exit 1
+else
+  printf 'ok\n'
+fi
+
+# ── Test 6: HATCH_INSTALL_STRICT=0 continues when gemma model pack fails ─
+printf 'test: HATCH_INSTALL_STRICT=0 continues on gemma failure... '
+if ! HATCH_INSTALL_MONA_TOOLS=0 HATCH_INSTALL_SKILL_DEPS=0 HATCH_INSTALL_STRICT=0 bash "${PATCHED_INSTALL}" > "${TMP}/t6.out" 2>&1; then
+  printf 'FAIL (expected exit 0, got 1)\n' >&2
+  cat "${TMP}/t6.out" >&2
+  exit 1
+fi
+if ! grep -q "warning: Gemma model pack installation failed" "${TMP}/t6.out"; then
+  printf 'FAIL (gemma warning message missing)\n' >&2
+  cat "${TMP}/t6.out" >&2
   exit 1
 fi
 printf 'ok\n'

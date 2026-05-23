@@ -136,7 +136,10 @@ cd /Volumes/<PENDRIVE>/dist
 
 `install.sh` is generated into the prepared bundle and invokes
 `bin/hatch --apply --bundle-root <dist> install`, then runs `install-mona-tools.sh`
-when Mona tools are enabled at install time unless `HATCH_INSTALL_MONA_TOOLS=0`.
+when Mona tools are enabled at install time unless `HATCH_INSTALL_MONA_TOOLS=0`, and
+runs `install-gemma-model.sh` when the Gemma model pack is present unless
+`HATCH_INSTALL_GEMMA_MODEL=0`. LM Studio must already be installed when the model
+pack is on the pendrive (`HATCH_INSTALL_STRICT=1` aborts otherwise).
 
 ## Prepared Bundle Layout
 

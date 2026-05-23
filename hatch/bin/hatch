@@ -927,11 +927,12 @@ lm_studio_app_installed() {
 print_manual_local_inference_handoff() {
   local gemma_dir
   gemma_dir="$(gemma_lmstudio_models_dir)"
-  log_step "install" "Manual local inference handoff"
-  printf '  manual: install LM Studio from the official .dmg before ./install-gemma-model.sh\n'
+  log_step "install" "Local inference handoff"
+  printf '  manual: install LM Studio from the official .dmg before ./install.sh when local inference is in the contract\n'
   printf '  manual: install Docker Desktop from the official .dmg if sandboxed tools are required\n'
-  printf '  manual: use ./install-gemma-model.sh when the optional Gemma model pack is present on the pendrive\n'
-  printf '  manual: after install-model, launch LM Studio once; models load from %s\n' "${gemma_dir}"
+  printf '  info: install.sh stages Gemma automatically when model-packs/gemma-4-e4b/ is beside dist/\n'
+  printf '  manual: after install, launch LM Studio once; models load from %s\n' "${gemma_dir}"
+  printf '  manual: rerun ./install-gemma-model.sh only to recover a failed model staging step\n'
 }
 
 print_technician_handoff() {

@@ -73,3 +73,13 @@ if PATH="/usr/bin:/bin:/usr/sbin:/sbin" HOME="${HOME_DIR}" \
   exit 1
 fi
 grep -Eq "model pack file (byte size|sha256) mismatch" "${TMP}/tamper.out"
+
+WRAPPER_DIST="${TMP}/no-pack-dist/isolated-dist"
+mkdir -p "${WRAPPER_DIST}"
+cp "${ROOT}/templates/install-gemma-model.sh" "${WRAPPER_DIST}/"
+chmod +x "${WRAPPER_DIST}/install-gemma-model.sh"
+if bash "${WRAPPER_DIST}/install-gemma-model.sh" >"${TMP}/missing-pack.out" 2>&1; then
+  printf 'expected install-gemma-model.sh to fail when model pack is absent\n' >&2
+  exit 1
+fi
+grep -q "Gemma model pack not found" "${TMP}/missing-pack.out"

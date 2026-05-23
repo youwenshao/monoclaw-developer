@@ -242,7 +242,11 @@ fi
 grep -q "bundle file is not listed in manifest artifacts: runtime/unlisted.txt" "${TMP}/unlisted.out"
 rm "${DIST}/runtime/unlisted.txt"
 
-PATH="/usr/bin:/bin:/usr/sbin:/sbin" HOME="${HOME_DIR}" HATCH_FORCE_HOMEBREW_MISSING=1 HATCH_RUNTIME_PYTHON="${FAKE_PYTHON}" HATCH_INSTALL_DRY_RUN=1 "${DIST}/install.sh" | tee "${TMP}/install.out"
+LM_STUDIO_APP="${TMP}/LM Studio.app"
+GEMMA_TARGET="${HOME_DIR}/.lmstudio/models/lmstudio-community/gemma-4-E4B-it-GGUF"
+mkdir -p "${LM_STUDIO_APP}"
+
+PATH="/usr/bin:/bin:/usr/sbin:/sbin" HOME="${HOME_DIR}" HATCH_FORCE_HOMEBREW_MISSING=1 HATCH_RUNTIME_PYTHON="${FAKE_PYTHON}" HATCH_INSTALL_DRY_RUN=1 HATCH_LM_STUDIO_APP_PATH="${LM_STUDIO_APP}" "${DIST}/install.sh" | tee "${TMP}/install.out"
 grep -q "dry-run: mkdir -p ${HOME_DIR}/.monoclaw/vendor" "${TMP}/install.out"
 grep -q "dry-run: cp ${DIST}/hatch-manifest.json ${HOME_DIR}/.monoclaw/vendor/hatch-manifest.json" "${TMP}/install.out"
 grep -q "dry-run: cp -R ${DIST}/vendor/wheelhouse ${HOME_DIR}/.monoclaw/vendor/wheelhouse" "${TMP}/install.out"
@@ -254,7 +258,10 @@ grep -Fq "dry-run: ${HOME_DIR}/.monoclaw/vendor/runtime/venv/bin/python -m pip i
 grep -Fq "dry-run: ${HOME_DIR}/.monoclaw/vendor/runtime/venv/bin/python -m pip install --no-index --find-links ${HOME_DIR}/.monoclaw/vendor/wheelhouse ${HOME_DIR}/.monoclaw/vendor/runtime/monoclaw_runtime-0.1.0-py3-none-any.whl[local-office]" "${TMP}/install.out"
 grep -q "dry-run: cp -R ${TMP}/tool-packs/mona-secretary-tools ${HOME_DIR}/.monoclaw/vendor/mona-tools" "${TMP}/install.out"
 grep -q "dry-run: install Mona secretary plugins into ${HOME_DIR}/.monoclaw/plugins" "${TMP}/install.out"
-grep -q "manual: install LM Studio from the official .dmg before ./install-gemma-model.sh" "${TMP}/install.out"
+grep -q "manual: install LM Studio from the official .dmg before ./install.sh when local inference is in the contract" "${TMP}/install.out"
+grep -q "info: install.sh stages Gemma automatically when model-packs/gemma-4-e4b/ is beside dist/" "${TMP}/install.out"
+grep -q "dry-run: mkdir -p ${GEMMA_TARGET}" "${TMP}/install.out"
+grep -q "dry-run: cp ${TMP}/model-packs/gemma-4-e4b/gemma-4-E4B-it-Q4_K_M.gguf ${GEMMA_TARGET}/.gemma-4-E4B-it-Q4_K_M.gguf.tmp" "${TMP}/install.out"
 if grep -q "Skill dependencies pack not found" "${TMP}/install.out"; then
   printf 'install should not warn about a missing skill-deps pack when no pack was built\n' >&2
   exit 1
@@ -268,6 +275,11 @@ mv "${TMP}/tool-packs/mona-secretary-tools" "${TMP}/tool-packs/mona-secretary-to
 PATH="/usr/bin:/bin:/usr/sbin:/sbin" HOME="${HOME_DIR}" HATCH_FORCE_HOMEBREW_MISSING=1 HATCH_RUNTIME_PYTHON="${FAKE_PYTHON}" HATCH_INSTALL_DRY_RUN=1 "${DIST}/install.sh" 2>&1 | tee "${TMP}/install-missing-tools.out"
 grep -q "warning: Mona secretary tools installation failed; core MonoClaw runtime remains installed" "${TMP}/install-missing-tools.out"
 mv "${TMP}/tool-packs/mona-secretary-tools.missing" "${TMP}/tool-packs/mona-secretary-tools"
+
+mv "${TMP}/model-packs/gemma-4-e4b" "${TMP}/model-packs/gemma-4-e4b.missing"
+PATH="/usr/bin:/bin:/usr/sbin:/sbin" HOME="${HOME_DIR}" HATCH_FORCE_HOMEBREW_MISSING=1 HATCH_RUNTIME_PYTHON="${FAKE_PYTHON}" HATCH_INSTALL_DRY_RUN=1 HATCH_LM_STUDIO_APP_PATH="${LM_STUDIO_APP}" "${DIST}/install.sh" 2>&1 | tee "${TMP}/install-missing-gemma.out"
+grep -q "warning: Gemma model pack installation failed; core MonoClaw runtime remains installed" "${TMP}/install-missing-gemma.out"
+mv "${TMP}/model-packs/gemma-4-e4b.missing" "${TMP}/model-packs/gemma-4-e4b"
 
 cp "${TMP}/tool-packs/mona-secretary-tools/bin/wacrawl" "${TMP}/wacrawl.original"
 printf 'tampered\n' > "${TMP}/tool-packs/mona-secretary-tools/bin/wacrawl"
@@ -286,7 +298,7 @@ mv "${TMP}/wacrawl.original" "${TMP}/tool-packs/mona-secretary-tools/bin/wacrawl
 APPLY_HOME="${TMP}/apply-home"
 mkdir -p "${APPLY_HOME}/.monoclaw/skills/customer-office"
 printf 'customer skill override\n' > "${APPLY_HOME}/.monoclaw/skills/customer-office/SKILL.md"
-PATH="/usr/bin:/bin:/usr/sbin:/sbin" HOME="${APPLY_HOME}" HATCH_FORCE_HOMEBREW_MISSING=1 HATCH_SKIP_HOMEBREW_INSTALL=1 HATCH_SKIP_RUNTIME_BOOTSTRAP=1 "${DIST}/install.sh" | tee "${TMP}/apply.out"
+PATH="/usr/bin:/bin:/usr/sbin:/sbin" HOME="${APPLY_HOME}" HATCH_FORCE_HOMEBREW_MISSING=1 HATCH_SKIP_HOMEBREW_INSTALL=1 HATCH_SKIP_RUNTIME_BOOTSTRAP=1 HATCH_LM_STUDIO_APP_PATH="${LM_STUDIO_APP}" "${DIST}/install.sh" | tee "${TMP}/apply.out"
 grep -q "run: mkdir -p ${APPLY_HOME}/.monoclaw/vendor" "${TMP}/apply.out"
 grep -q "Skipping Homebrew installation because HATCH_SKIP_HOMEBREW_INSTALL=1" "${TMP}/apply.out"
 grep -q "Skipping runtime bootstrap because HATCH_SKIP_RUNTIME_BOOTSTRAP=1" "${TMP}/apply.out"

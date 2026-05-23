@@ -51,9 +51,10 @@ cd /Volumes/<你的隨身碟>/dist
 ./install.sh
 ```
 
-`install.sh` 會自動完成兩件事：
+`install.sh` 會自動完成以下步驟：
 1. 安裝核心 MonoClaw 執行環境、skills 和命令轉發器（shim）。
 2. 安裝 Mona 秘書工具附屬組件（除非 `HATCH_INSTALL_MONA_TOOLS=0`）。
+3. 當 `model-packs/gemma-4-e4b/` 位於 `dist/` 旁時，將 Gemma 4 模型包裝載到 LM Studio（除非 `HATCH_INSTALL_GEMMA_MODEL=0`）。若合約包含本地推理，請在執行 `./install.sh` **之前**從官方 `.dmg` 安裝 LM Studio。
 
 **你不需要傳入 `--apply`。** 產生的 `install.sh` 已經預設應用變更。
 
@@ -122,26 +123,22 @@ monoclaw setup
 
 ### 如果已配置本地推理
 
-1. 從官方 `.dmg` 安裝 LM Studio，並在執行 `./install-gemma-model.sh` **之前**完成（必需）。
-2. 啟動 LM Studio 一次並完成首次設定。
-3. 如果模型包在隨身碟上，請執行：
-   ```bash
-   cd /Volumes/<你的隨身碟>/dist
-   ./install-gemma-model.sh
-   ```
-   腳本會將聊天 GGUF 與視覺投影（mmproj）複製到 LM Studio 原生模型目錄：
+1. 在執行 `./install.sh` **之前**從官方 `.dmg` 安裝 LM Studio（當模型包在隨身碟上時為必需步驟）。
+2. 照常執行 `./install.sh`。當 `model-packs/gemma-4-e4b/` 位於 `dist/` 旁時，安裝程式會將聊天 GGUF 與視覺投影（mmproj）複製到 LM Studio 原生模型目錄：
    ```
    ~/.lmstudio/models/lmstudio-community/gemma-4-E4B-it-GGUF/
      gemma-4-E4B-it-Q4_K_M.gguf
      mmproj-gemma-4-E4B-it-f16.gguf
    ```
-4. 再次啟動 LM Studio；應自動發現已部署的模型（無需手動匯入）。
-5. 再次運行 `monoclaw setup`（或編輯 `~/.monoclaw/.env`）以指向本地端點：
+3. 啟動 LM Studio 一次並完成首次設定；應自動發現已裝載的模型（無需手動匯入）。
+4. 再次運行 `monoclaw setup`（或編輯 `~/.monoclaw/.env`）以指向本地端點：
    ```
    LM_BASE_URL=http://127.0.0.1:1234/v1
    LM_API_KEY=dummy-lm-api-key
    MONOCLAW_MODEL=local:gemma4:e4b
    ```
+
+若模型裝載步驟失敗且無需重新執行完整安裝，可使用 `./install-gemma-model.sh` 恢復。
 
 ### 如果已安裝 Mona 秘書工具
 
@@ -192,8 +189,9 @@ export MONOCLAW_CONFIRM_FRESH_INSTALL_RESET=1
 | `Python 3.11+ runtime interpreter missing` | 安裝包複製時沒有包含 `vendor/python/` | 從組裝機重新構建或重新複製安裝包 |
 | `Bundled wheelhouse is required for production runtime bootstrap` | 構建時沒有執行 `bash scripts/build_wheelhouse.sh` | 返回組裝機重新構建 |
 | `Mona secretary tools installation failed; core MonoClaw runtime remains installed` | `tool-packs/mona-secretary-tools/` 沒有複製到隨身碟 | 複製附屬組件並重新執行 `./install.sh`，或設定 `HATCH_INSTALL_MONA_TOOLS=0` 以故意略過 |
+| `Gemma model pack installation failed (HATCH_INSTALL_STRICT=1)` | `model-packs/gemma-4-e4b/` 存在但 LM Studio 未安裝（或模型包驗證失敗） | 從 `.dmg` 安裝 LM Studio 後重新執行 `./install.sh`，或僅在故意部分安裝時設定 `HATCH_INSTALL_STRICT=0` |
 | `Xcode Command Line Tools are missing` | CLT 未安裝或 macOS 提示未完成 | 執行 `xcode-select --install`，完成 GUI 提示，然後重新執行 `./install.sh` |
-| `LM Studio app is missing` | 客戶合約包含本地推理但 LM Studio 未安裝 | 從 `.dmg` 安裝 LM Studio，然後重新執行 `monoclaw setup` |
+| `LM Studio app is missing` | 客戶合約包含本地推理但 LM Studio 未安裝 | 從 `.dmg` 安裝 LM Studio，然後重新執行 `./install.sh` |
 
 ### 離線或隔離網絡的 Mac
 
@@ -238,4 +236,4 @@ export MONOCLAW_CONFIRM_FRESH_INSTALL_RESET=1
 | `bash dist/bin/hatch doctor` | 感覺異常時的完整診斷。 |
 | `bash dist/bin/hatch verify` | 僅檢查核心執行環境完整性。 |
 | `bash dist/bin/hatch verify-local-inference` | 檢查 LM Studio + 模型就緒狀態。 |
-| `./install-gemma-model.sh` | 啟用本地推理時，將模型包佈署到本地。 |
+| `./install-gemma-model.sh` | 在模型裝載步驟失敗後重新執行，或在不重新執行完整 `./install.sh` 的情況下恢復。 |

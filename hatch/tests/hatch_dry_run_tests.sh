@@ -170,7 +170,7 @@ grep -Fq "dry-run: ${HOME_DIR}/.monoclaw/vendor/runtime/venv/bin/python -m pip i
 grep -Fq "dry-run: ${HOME_DIR}/.monoclaw/vendor/runtime/venv/bin/python -m pip install --no-index --find-links ${HOME_DIR}/.monoclaw/vendor/wheelhouse ${HOME_DIR}/.monoclaw/vendor/runtime/.hatch-install/${PIP_WHEEL_NAME}[local-office]" "${TMP}/install.out"
 grep -q "dry-run: write ${HOME_DIR}/.local/bin/monoclaw shim" "${TMP}/install.out"
 grep -q "dry-run: install bundled skills into ${HOME_DIR}/.monoclaw/skills" "${TMP}/install.out"
-grep -q "manual: install LM Studio from the official .dmg before ./install-gemma-model.sh" "${TMP}/install.out"
+grep -q "manual: install LM Studio from the official .dmg before ./install.sh when local inference is in the contract" "${TMP}/install.out"
 if grep -q "lmstudio.ai/install.sh" "${TMP}/install.out"; then
   printf 'install should not script LM Studio installation\n' >&2
   exit 1
